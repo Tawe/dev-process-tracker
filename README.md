@@ -2,15 +2,6 @@
 
 Dev Process Tracker (`devpt`) helps you track and control local dev services from one place.
 
-## Copilot CLI Challenge Submission Prep
-
-If you are submitting this repo to the GitHub Copilot CLI Challenge (submission deadline: **February 15, 2026, 11:59 PM PT**), use these repo docs:
-
-- `CHALLENGE_CHECKLIST.md` - final pre-submit checklist
-- `HOW_COPILOT_CLI_WAS_USED.md` - evidence of Copilot CLI usage during development
-- `ATTRIBUTION.md` - third-party code/inspiration disclosure
-- `LICENSE` - project license (MIT)
-
 ## What it does
 
 - Opens an interactive TUI by default (`devpt`)
