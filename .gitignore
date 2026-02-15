@@ -1,0 +1,13 @@
+# macOS Finder metadata
+.DS_Store
+
+# Local build artifact
+/devpt
+
+# Temporary homes used by smoke-test scripts
+/.tmp-home/
+/.tmp-home*/
+
+
+# Local draft/working docs
+/docs

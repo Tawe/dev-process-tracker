@@ -1,0 +1,8 @@
+{
+  "name": "devpt-node-port-fallback",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node dev.js"
+  }
+}
