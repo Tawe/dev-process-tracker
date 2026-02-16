@@ -1,5 +1,7 @@
 # Dev Process Tracker
 
+![Dev Process Tracker hero](devpttitle.png)
+
 Dev Process Tracker (`devpt`) helps you track and control local dev services from one place.
 
 ## What it does
