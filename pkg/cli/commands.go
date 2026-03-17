@@ -118,7 +118,7 @@ func (a *App) StartCmd(name string) error {
 		return fmt.Errorf("service %q not found: %s", name, strings.Join(errs, "; "))
 	}
 
-	fmt.Printf("Starting service %q...\n", svc.Name)
+	fmt.Printf("Starting %q...\n", svc.Name)
 	pid, err := a.processManager.Start(svc)
 	if err != nil {
 		return fmt.Errorf("failed to start service: %w", err)
@@ -129,7 +129,7 @@ func (a *App) StartCmd(name string) error {
 		fmt.Fprintf(os.Stderr, "Warning: failed to update registry: %v\n", err)
 	}
 
-	fmt.Printf("Service %q started with PID %d\n", svc.Name, pid)
+	fmt.Printf("Started %q\n", svc.Name)
 	return nil
 }
 
@@ -244,7 +244,7 @@ func (a *App) RestartCmd(name string) error {
 	}
 
 	// Start
-	fmt.Printf("Starting service %q...\n", svc.Name)
+	fmt.Printf("Starting %q...\n", svc.Name)
 	pid, err := a.processManager.Start(svc)
 	if err != nil {
 		return fmt.Errorf("failed to start service: %w", err)
@@ -255,7 +255,7 @@ func (a *App) RestartCmd(name string) error {
 		fmt.Fprintf(os.Stderr, "Warning: failed to update registry: %v\n", err)
 	}
 
-	fmt.Printf("Service %q restarted with PID %d\n", svc.Name, pid)
+	fmt.Printf("Restarted %q\n", svc.Name)
 	return nil
 }
 
@@ -299,7 +299,7 @@ func (a *App) BatchStartCmd(names []string) error {
 		}
 
 		// Attempt to start
-		fmt.Printf("Starting service %q...\n", name)
+		fmt.Printf("Starting %q...\n", name)
 		pid, err := a.processManager.Start(svc)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to start service %q: %v\n", name, err)
@@ -315,7 +315,7 @@ func (a *App) BatchStartCmd(names []string) error {
 			fmt.Fprintf(os.Stderr, "Warning: failed to update registry for %q: %v\n", name, updateErr)
 		}
 
-		fmt.Printf("Service %q started with PID %d\n", name, pid)
+		fmt.Printf("Started %q\n", name)
 	}
 
 	if anyFailure {
@@ -456,7 +456,7 @@ func (a *App) BatchRestartCmd(names []string) error {
 		}
 
 		// Start service
-		fmt.Printf("Starting service %q...\n", name)
+		fmt.Printf("Starting %q...\n", name)
 		pid, err := a.processManager.Start(svc)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to start service %q: %v\n", name, err)
@@ -472,7 +472,7 @@ func (a *App) BatchRestartCmd(names []string) error {
 			fmt.Fprintf(os.Stderr, "Warning: failed to update registry for %q: %v\n", name, updateErr)
 		}
 
-		fmt.Printf("Service %q restarted with PID %d\n", name, pid)
+		fmt.Printf("Restarted %q\n", name)
 	}
 
 	if anyFailure {

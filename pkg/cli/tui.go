@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 
@@ -33,11 +34,15 @@ type confirmKind int
 const (
 	viewModeTable viewMode = iota
 	viewModeLogs
+	viewModeLogsDebug // Simple viewport test mode
 	viewModeCommand
 	viewModeSearch
 	viewModeHelp
 	viewModeConfirm
 )
+
+// Use viewport for table rendering
+const useViewportForTable = true
 
 const (
 	focusRunning viewFocus = iota
@@ -105,26 +110,48 @@ type topModel struct {
 	removed  map[string]*models.ManagedService
 
 	confirm *confirmState
+
+	// Viewport state for logs view (M0 - walking skeleton)
+	viewport           viewport.Model
+	viewportNeedsTop    bool // Flag to reset viewport to top after sizing
+	tableContentHash    string // Track table content to avoid unnecessary updates
+	selectionChanged   bool  // Track if selection changed for scrolling
+	lastSelected       int   // Track last selection to detect changes
+	lastManagedSel     int   // Track last managed selection
+	highlightIndex     int
+	highlightMatches   []int
+
+	// Double-click detection
+	lastClickTime time.Time
+	lastClickY    int
 }
 
-func newTopModel(app *App) topModel {
-	m := topModel{
+func newTopModel(app *App) *topModel {
+	m := &topModel{
 		app:           app,
 		lastUpdate:    time.Now(),
 		lastInput:     time.Now(),
 		mode:          viewModeTable,
 		focus:         focusRunning,
-		followLogs:    true,
+		followLogs:    false, // Disabled by default to avoid interfering with scrolling
 		health:        make(map[int]string),
 		healthDetails: make(map[int]*health.HealthCheck),
 		healthChk:     health.NewChecker(800 * time.Millisecond),
 		sortBy:        sortRecent,
 		starting:      make(map[string]time.Time),
 		removed:       make(map[string]*models.ManagedService),
+		lastSelected:  -1,
+		lastManagedSel: -1,
 	}
 	if servers, err := app.discoverServers(); err == nil {
 		m.servers = servers
 	}
+
+	// Initialize viewport (M0 - walking skeleton)
+	m.viewport = viewport.New(0, 0)
+	m.highlightIndex = 0
+	m.highlightMatches = []int{}
+
 	return m
 }
 
@@ -132,10 +159,62 @@ func (m topModel) Init() tea.Cmd {
 	return tickCmd()
 }
 
-func (m topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		m.lastInput = time.Now()
+
+		// In logs mode, let viewport handle scrolling keys first (BR-1.6)
+		// Only intercept keys we explicitly handle (q, esc, b, f, n, N)
+		if m.mode == viewModeLogs {
+			switch msg.String() {
+			case "q", "ctrl+c":
+				return m, tea.Quit
+			case "esc", "b":
+				m.mode = viewModeTable
+				m.logLines = nil
+				m.logErr = nil
+				m.logSvc = nil
+				m.logPID = 0
+				return m, nil
+			case "f":
+				m.followLogs = !m.followLogs
+				return m, nil
+			case "n":
+				if len(m.highlightMatches) > 0 {
+					m.highlightIndex = (m.highlightIndex + 1) % len(m.highlightMatches)
+				}
+				return m, nil
+			case "N":
+				if len(m.highlightMatches) > 0 {
+					m.highlightIndex = (m.highlightIndex - 1 + len(m.highlightMatches)) % len(m.highlightMatches)
+				}
+				return m, nil
+			default:
+				// Pass all other keys to viewport for scrolling (arrows, pgup/down, etc.)
+				var cmd tea.Cmd
+				m.viewport, cmd = m.viewport.Update(msg)
+				return m, cmd
+			}
+		}
+
+		// Debug mode - simple viewport test
+		if m.mode == viewModeLogsDebug {
+			switch msg.String() {
+			case "q", "ctrl+c":
+				return m, tea.Quit
+			case "b", "esc":
+				m.mode = viewModeTable
+				return m, nil
+			default:
+				// Pass all keys to viewport
+				var cmd tea.Cmd
+				m.viewport, cmd = m.viewport.Update(msg)
+				return m, cmd
+			}
+		}
+
+		// Table mode key handling
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
@@ -143,9 +222,20 @@ func (m topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.mode == viewModeTable {
 				if m.focus == focusRunning {
 					m.focus = focusManaged
+					// Ensure managed selection is valid
+					managed := m.managedServices()
+					if m.managedSel < 0 && len(managed) > 0 {
+						m.managedSel = 0
+					}
 				} else {
 					m.focus = focusRunning
+					// Ensure running selection is valid
+					visible := m.visibleServers()
+					if m.selected < 0 && len(visible) > 0 {
+						m.selected = 0
+					}
 				}
+				m.selectionChanged = true
 			}
 			return m, nil
 		case "?", "f1":
@@ -172,6 +262,12 @@ func (m topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "h":
 			if m.mode == viewModeTable {
 				m.showHealthDetail = !m.showHealthDetail
+			}
+			return m, nil
+		case "D":
+			if m.mode == viewModeTable {
+				m.mode = viewModeLogsDebug
+				m.initDebugViewport()
 			}
 			return m, nil
 		case "f":
@@ -220,6 +316,8 @@ func (m topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "esc":
 			switch m.mode {
+			case viewModeTable:
+				return m, tea.Quit
 			case viewModeLogs:
 				m.mode = viewModeTable
 				m.logLines = nil
@@ -270,9 +368,11 @@ func (m topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.mode == viewModeTable {
 				if m.focus == focusRunning && m.selected > 0 {
 					m.selected--
+					m.selectionChanged = true
 				}
 				if m.focus == focusManaged && m.managedSel > 0 {
 					m.managedSel--
+					m.selectionChanged = true
 				}
 			}
 			return m, nil
@@ -281,11 +381,13 @@ func (m topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.focus == focusRunning {
 					if m.selected < len(m.visibleServers())-1 {
 						m.selected++
+						m.selectionChanged = true
 					}
 				}
 				if m.focus == focusManaged {
 					if m.managedSel < len(m.managedServices())-1 {
 						m.managedSel++
+						m.selectionChanged = true
 					}
 				}
 			}
@@ -299,6 +401,26 @@ func (m topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "n":
 			if m.mode == viewModeConfirm {
 				cmd := m.executeConfirm(false)
+				return m, cmd
+			}
+			// Highlight cycling: 'n' moves to next highlight (BR-1.3)
+			if m.mode == viewModeLogs && len(m.highlightMatches) > 0 {
+				m.highlightIndex = (m.highlightIndex + 1) % len(m.highlightMatches)
+				return m, nil
+			}
+			return m, nil
+		case "N":
+			// Highlight cycling: 'N' moves to previous highlight (BR-1.4)
+			if m.mode == viewModeLogs && len(m.highlightMatches) > 0 {
+				m.highlightIndex = (m.highlightIndex - 1 + len(m.highlightMatches)) % len(m.highlightMatches)
+				return m, nil
+			}
+			return m, nil
+		case "pgup", "pgdown", "home", "end":
+			// In table mode, pass scrolling keys to viewport
+			if m.mode == viewModeTable {
+				var cmd tea.Cmd
+				m.viewport, cmd = m.viewport.Update(msg)
 				return m, cmd
 			}
 			return m, nil
@@ -317,37 +439,7 @@ func (m topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.refresh()
 				return m, nil
 			case viewModeTable:
-				if m.focus == focusManaged {
-					managed := m.managedServices()
-					if m.managedSel >= 0 && m.managedSel < len(managed) {
-						if err := m.app.StartCmd(managed[m.managedSel].Name); err != nil {
-							m.cmdStatus = err.Error()
-						} else {
-							name := managed[m.managedSel].Name
-							m.cmdStatus = fmt.Sprintf("Started %q", name)
-							m.starting[name] = time.Now()
-						}
-						m.refresh()
-						return m, nil
-					}
-				}
-				if m.focus == focusRunning {
-					visible := m.visibleServers()
-					if m.selected >= 0 && m.selected < len(visible) {
-						srv := visible[m.selected]
-						if srv.ManagedService == nil {
-							m.mode = viewModeLogs
-							m.logSvc = nil
-							m.logPID = srv.ProcessRecord.PID
-							return m, m.tailLogsCmd()
-						}
-						m.mode = viewModeLogs
-						m.logSvc = srv.ManagedService
-						m.logPID = 0
-						return m, m.tailLogsCmd()
-					}
-				}
-				return m, nil
+				return m.handleEnterKey()
 			}
 			return m, nil
 		default:
@@ -367,10 +459,39 @@ func (m topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+	case tea.MouseMsg:
+		// Handle mouse click in table mode for selection
+		if m.mode == viewModeTable {
+			if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+				return m.handleTableMouseClick(msg)
+			}
+			// Pass scroll/wheel events to viewport
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			return m, cmd
+		}
+		// Handle mouse clicks in logs view mode
+		if m.mode == viewModeLogs {
+			// Click events (button press) are handled by our click handler
+			if msg.Action == tea.MouseActionPress {
+				return m.handleMouseClick(msg)
+			}
+			// All other mouse events (wheel, drag, release) go to viewport for scrolling
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			return m, cmd
+		}
+		// Debug mode - pass all mouse events to viewport
+		if m.mode == viewModeLogsDebug {
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			return m, cmd
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		return m, nil
+		// Don't return - let viewport receive this event too
 	case tickMsg:
 		m.refresh()
 		if m.mode == viewModeLogs && m.followLogs {
@@ -382,8 +503,46 @@ func (m topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tickCmd()
 	case logMsg:
+		// Save current scroll position
+		oldYOffset := m.viewport.YOffset
+		totalLines := m.viewport.TotalLineCount()
+		visibleLines := m.viewport.VisibleLineCount()
+		wasAtBottom := (oldYOffset + visibleLines >= totalLines) || totalLines == 0
+
 		m.logLines = msg.lines
 		m.logErr = msg.err
+		// Update viewport content with new log lines (DEVPT-002)
+		if m.logErr != nil {
+			var content string
+			if errors.Is(m.logErr, process.ErrNoLogs) {
+				content = "No devpt logs for this service yet.\nLogs are only captured when started by devpt.\n"
+			} else if errors.Is(m.logErr, process.ErrNoProcessLogs) {
+				content = "No accessible logs for this process.\nIf it writes only to a terminal, there may be nothing to tail here.\n"
+			} else {
+				content = fmt.Sprintf("Error: %v\n", m.logErr)
+			}
+			m.viewport.SetContent(content)
+			m.viewport.GotoTop()
+		} else if len(m.logLines) == 0 {
+			m.viewport.SetContent("(no logs yet)\n")
+			m.viewport.GotoTop()
+		} else {
+			content := strings.Join(m.logLines, "\n")
+			m.viewport.SetContent(content)
+
+			// Restore scroll position or follow
+			if m.followLogs || wasAtBottom {
+				// If follow mode is on or we were at bottom, go to bottom
+				newTotalLines := m.viewport.TotalLineCount()
+				newVisibleLines := m.viewport.VisibleLineCount()
+				if newTotalLines > newVisibleLines {
+					m.viewport.SetYOffset(newTotalLines - newVisibleLines)
+				}
+			} else {
+				// Otherwise, try to preserve user's scroll position
+				m.viewport.SetYOffset(oldYOffset)
+			}
+		}
 		return m, tickCmd()
 	case healthMsg:
 		m.healthBusy = false
@@ -394,6 +553,16 @@ func (m topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tickCmd()
 	}
+
+	// Pass events to viewport when in logs mode or debug mode (DEVPT-002)
+	if m.mode == viewModeLogs || m.mode == viewModeLogsDebug {
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		if cmd != nil {
+			return m, cmd
+		}
+	}
+
 	return m, nil
 }
 
@@ -417,7 +586,7 @@ func (m *topModel) refresh() {
 	}
 }
 
-func (m topModel) View() string {
+func (m *topModel) View() string {
 	if m.err != nil {
 		return fmt.Sprintf("Error: %v\nPress 'q' to quit\n", m.err)
 	}
@@ -432,7 +601,6 @@ func (m topModel) View() string {
 
 	// Ensure stale lines are removed when viewport shrinks/resizes.
 	b.WriteString("\x1b[H\x1b[2J")
-	b.WriteString("\n")
 	if m.mode == viewModeLogs {
 		name := "-"
 		if m.logSvc != nil {
@@ -441,10 +609,11 @@ func (m topModel) View() string {
 			name = fmt.Sprintf("pid:%d", m.logPID)
 		}
 		b.WriteString(headerStyle.Render(fmt.Sprintf("Logs: %s (b back, f follow:%t)", name, m.followLogs)))
+	} else if m.mode == viewModeLogsDebug {
+		b.WriteString(headerStyle.Render("Viewport Debug Mode (b back, q quit)"))
 	} else {
-		b.WriteString(headerStyle.Render("Dev Process Tracker - Health Monitor (q quit)"))
+		b.WriteString(headerStyle.Render("Dev Process Tracker - Health Monitor (q quit, D for debug)"))
 	}
-	b.WriteString("\n\n")
 	if m.mode == viewModeTable || m.mode == viewModeCommand || m.mode == viewModeSearch || m.mode == viewModeConfirm {
 		focus := "running"
 		if m.focus == focusManaged {
@@ -455,8 +624,9 @@ func (m topModel) View() string {
 			filter = "none"
 		}
 		ctx := fmt.Sprintf("Focus: %s | Sort: %s | Filter: %s", focus, sortModeLabel(m.sortBy), filter)
+		b.WriteString("\n")
 		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(fitLine(ctx, width)))
-		b.WriteString("\n\n")
+		b.WriteString("\n")
 	}
 
 	switch m.mode {
@@ -464,6 +634,12 @@ func (m topModel) View() string {
 		b.WriteString(m.renderHelp(width))
 	case viewModeLogs:
 		b.WriteString(m.renderLogs(width))
+	case viewModeLogsDebug:
+		b.WriteString(m.renderLogsDebug(width))
+	case viewModeTable:
+		// Use viewport for table rendering
+		b.WriteString(m.renderTableWithViewport(width))
+		b.WriteString("\n")
 	default:
 		rowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
 		b.WriteString(rowStyle.Render(m.renderTable(width)))
@@ -493,19 +669,47 @@ func (m topModel) View() string {
 		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true).Render(fitLine(m.confirm.prompt+" [y/N]", width)))
 		b.WriteString("\n")
 	}
+	var footer string
+	var statusLine string
+
+	// Build status line (orange, above footer)
 	if m.cmdStatus != "" {
-		b.WriteString("\n")
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(fitLine(m.cmdStatus, width)))
+		statusLine = m.cmdStatus
+	} else if m.mode == viewModeTable && m.focus == focusManaged {
+		// Show crash reason for selected managed service
+		managed := m.managedServices()
+		if m.managedSel >= 0 && m.managedSel < len(managed) {
+			svc := managed[m.managedSel]
+			if reason := m.crashReasonForService(svc.Name); reason != "" {
+				statusLine = fmt.Sprintf("Crash: %s", reason)
+			}
+		}
+	}
+
+	if m.mode == viewModeLogs && len(m.highlightMatches) > 0 {
+		// Show match counter in logs view when highlights are active (BR-1.5)
+		matchCounter := fmt.Sprintf("Match %d/%d", m.highlightIndex+1, len(m.highlightMatches))
+		footer = fmt.Sprintf("%s | b back | f follow:%t | n/N next/prev highlight", matchCounter, m.followLogs)
+	} else if m.mode == viewModeLogs {
+		footer = fmt.Sprintf("b back | f follow:%t | ↑↓ scroll | Page Up/Down", m.followLogs)
+	} else if m.mode == viewModeLogsDebug {
+		footer = "b back | q quit | ↑↓ scroll | Page Up/Down"
+	} else if m.mode == viewModeTable {
+		footer = fmt.Sprintf("Services: %d | Tab switch | Enter logs/start | Page Up/Down scroll | / filter | ? help | D debug", m.countVisible())
+	} else {
+		footer = fmt.Sprintf("Last updated: %s | Services: %d | Tab switch | Enter logs/start | x remove managed | / filter | ^L clear filter | s sort | ? help | ^A add ^R restart ^E stop | D debug", m.lastUpdate.Format("15:04:05"), m.countVisible())
+	}
+	footerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
+
+	// Render status line (orange) above footer if present
+	if statusLine != "" {
+		statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("208"))
+		b.WriteString(statusStyle.Render(fitLine(statusLine, width)))
 		b.WriteString("\n")
 	}
 
+	b.WriteString(footerStyle.Render(fitLine(footer, width)))
 	b.WriteString("\n")
-	footer := fmt.Sprintf("Last updated: %s | Services: %d | Tab switch | Enter logs/start | x remove managed | / filter | ^L clear filter | s sort | ? help | ^A add ^R restart ^E stop", m.lastUpdate.Format("15:04:05"), m.countVisible())
-	footerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
-	for _, line := range wrapWords(footer, width) {
-		b.WriteString(footerStyle.Render(fitLine(line, width)))
-		b.WriteString("\n")
-	}
 	return b.String()
 }
 
@@ -569,34 +773,22 @@ func (m topModel) renderTable(width int) string {
 			}
 		}
 
-		cmdLines := wrapRunes(cmd, cmdW)
-		if len(cmdLines) == 0 {
-			cmdLines = []string{"-"}
+		// Truncate command to one line with ellipsis
+		truncatedCmd := cmd
+		if runewidth.StringWidth(cmd) > cmdW {
+			truncatedCmd = runewidth.Truncate(cmd, cmdW-3, "...")
 		}
+
 		rowFirstLineIdx[i] = len(lines)
-		for j, c := range cmdLines {
-			if j == 0 {
-				line := fmt.Sprintf("%s%s%s%s%s%s%s%s%s%s%s",
-					fixedCell(displayNames[i], nameW), strings.Repeat(" ", sep),
-					fixedCell(port, portW), strings.Repeat(" ", sep),
-					fixedCell(fmt.Sprintf("%d", pid), pidW), strings.Repeat(" ", sep),
-					fixedCell(project, projectW), strings.Repeat(" ", sep),
-					fixedCell(c, cmdW), strings.Repeat(" ", sep),
-					fixedCell(icon, healthW),
-				)
-				lines = append(lines, fitLine(line, width))
-			} else {
-				line := fmt.Sprintf("%s%s%s%s%s%s%s%s%s%s%s",
-					fixedCell("", nameW), strings.Repeat(" ", sep),
-					fixedCell("", portW), strings.Repeat(" ", sep),
-					fixedCell("", pidW), strings.Repeat(" ", sep),
-					fixedCell("", projectW), strings.Repeat(" ", sep),
-					fixedCell(c, cmdW), strings.Repeat(" ", sep),
-					fixedCell("", healthW),
-				)
-				lines = append(lines, fitLine(line, width))
-			}
-		}
+		line := fmt.Sprintf("%s%s%s%s%s%s%s%s%s%s%s",
+			fixedCell(displayNames[i], nameW), strings.Repeat(" ", sep),
+			fixedCell(port, portW), strings.Repeat(" ", sep),
+			fixedCell(fmt.Sprintf("%d", pid), pidW), strings.Repeat(" ", sep),
+			fixedCell(project, projectW), strings.Repeat(" ", sep),
+			fixedCell(truncatedCmd, cmdW), strings.Repeat(" ", sep),
+			fixedCell(icon, healthW),
+		)
+		lines = append(lines, fitLine(line, width))
 	}
 
 	if len(visible) == 0 {
@@ -606,9 +798,12 @@ func (m topModel) renderTable(width int) string {
 		return fitLine("(no matching servers)", width)
 	}
 
-	selectedLine := rowFirstLineIdx[m.selected]
-	if selectedLine >= 2 && selectedLine < len(lines) {
-		lines[selectedLine] = lipgloss.NewStyle().Background(lipgloss.Color("57")).Foreground(lipgloss.Color("15")).Render(lines[selectedLine])
+	// Bounds check: selected index may be out of bounds when filtering reduces visible items
+	if m.selected >= 0 && m.selected < len(visible) {
+		selectedLine := rowFirstLineIdx[m.selected]
+		if selectedLine >= 2 && selectedLine < len(lines) {
+			lines[selectedLine] = lipgloss.NewStyle().Background(lipgloss.Color("57")).Foreground(lipgloss.Color("15")).Render(lines[selectedLine])
+		}
 	}
 
 	out := strings.Join(lines, "\n")
@@ -707,7 +902,17 @@ func (m topModel) renderManaged(width int) string {
 	}
 
 	var b strings.Builder
-	b.WriteString(fitLine("Managed Services (Tab focus, Enter start)", width))
+	// Render header with horizontal line on same line
+	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
+	text := "Managed Services (Tab focus, Enter start) "
+	textWidth := runewidth.StringWidth(text)
+	fillWidth := width - textWidth
+	if fillWidth < 0 {
+		fillWidth = 0
+	}
+	fill := strings.Repeat("─", fillWidth)
+	line := text + fill
+	b.WriteString(headerStyle.Render(fitLine(line, width)))
 	b.WriteString("\n")
 	for i, svc := range managed {
 		state := m.serviceStatus(svc.Name)
@@ -740,33 +945,177 @@ func (m topModel) renderManaged(width int) string {
 	}
 	if m.focus == focusManaged && m.managedSel >= 0 && m.managedSel < len(managed) {
 		svc := managed[m.managedSel]
-		if reason := m.crashReasonForService(svc.Name); reason != "" {
-			b.WriteString(fitLine("Crash reason: "+reason, width))
-			b.WriteString("\n")
-		}
+		// Don't show crash reason inline - it makes the list jumpy
+		// Reason is shown in status line instead (below)
+		_ = svc
+		_ = m.crashReasonForService(svc.Name)
 	}
 	return b.String()
 }
 
-func (m topModel) renderLogs(width int) string {
-	if m.logErr != nil {
-		if errors.Is(m.logErr, process.ErrNoLogs) {
-			return "No devpt logs for this service yet.\nLogs are only captured when started by devpt.\n"
-		}
-		if errors.Is(m.logErr, process.ErrNoProcessLogs) {
-			return "No accessible logs for this process.\nIf it writes only to a terminal, there may be nothing to tail here.\n"
-		}
-		return fmt.Sprintf("Error: %v\n", m.logErr)
+func (m *topModel) renderLogs(width int) string {
+	// Calculate total space used by header and footer
+	headerText := m.logsHeaderView()
+	headerLines := 1 + strings.Count(headerText, "\n") // Count actual header lines
+
+	// Footer takes approximately 2-3 lines depending on wrapping
+	footerLines := 3
+
+	// Calculate available height for viewport
+	availableHeight := m.height - headerLines - footerLines
+	if availableHeight < 5 {
+		availableHeight = 5 // Minimum viewport height
 	}
-	if len(m.logLines) == 0 {
-		return "(no logs yet)\n"
+
+	m.viewport.Width = width
+	m.viewport.Height = availableHeight
+
+	// If we just entered logs mode, reset to top now that viewport is sized
+	if m.viewportNeedsTop {
+		m.viewport.GotoTop()
+		m.viewportNeedsTop = false
 	}
+
+	return m.viewport.View()
+}
+
+// ensureSelectionVisible scrolls the viewport to show the selected item
+func (m *topModel) ensureSelectionVisible() {
+	visible := m.visibleServers()
+	managed := m.managedServices()
+
+	// Viewport content is renderTableContent() which outputs:
+	// - renderTable(): header (line 0) + divider (line 1) + N data rows
+	// - "\n\n": 2 blank lines
+	// - renderManaged(): header + divider + N managed rows
+	var selectedLine int
+	if m.focus == focusRunning && m.selected >= 0 && m.selected < len(visible) {
+		// Running table: header (0) + divider (1) + data rows starting at line 2
+		selectedLine = 2 + m.selected
+	} else if m.focus == focusManaged && m.managedSel >= 0 && m.managedSel < len(managed) {
+		// After running section: 2 blank lines + managed header + divider + selected row
+		runningSectionLines := 2 + len(visible) // header + divider + N rows
+		selectedLine = runningSectionLines + 2 + 1 + 1 + m.managedSel // +2 for blank lines, +1 for header, +1 for divider
+	} else {
+		return
+	}
+
+	totalLines := m.viewport.TotalLineCount()
+	visibleLines := m.viewport.VisibleLineCount()
+	currentOffset := m.viewport.YOffset
+
+	// Calculate desired offset with some padding above/below selection
+	desiredOffset := selectedLine - visibleLines/3
+	if desiredOffset < 0 {
+		desiredOffset = 0
+	}
+	if desiredOffset > totalLines - visibleLines {
+		desiredOffset = totalLines - visibleLines
+	}
+
+	// Only scroll if selection is outside visible area
+	if selectedLine < currentOffset || selectedLine >= currentOffset + visibleLines {
+		m.viewport.SetYOffset(desiredOffset)
+	}
+}
+
+// renderTableWithViewport renders the table using the viewport component
+func (m *topModel) renderTableWithViewport(width int) string {
+	// Generate table content
+	tableContent := m.renderTableContent(width)
+
+	// Only update viewport content if it actually changed
+	contentHash := fmt.Sprintf("%s-%d", tableContent, len(m.servers))
+	if m.tableContentHash != contentHash {
+		m.viewport.SetContent(tableContent)
+		m.tableContentHash = contentHash
+	}
+
+	// Calculate available space for viewport
+	headerHeight := 3 // Title (1) + newline (1) + context (1)
+	footerHeight := 2 // Spacing newline (1) + footer line (1)
+
+	// Calculate if we need space for status line
+	hasStatus := false
+	if m.cmdStatus != "" {
+		hasStatus = true
+	} else if m.mode == viewModeTable && m.focus == focusManaged {
+		managed := m.managedServices()
+		if m.managedSel >= 0 && m.managedSel < len(managed) {
+			svc := managed[m.managedSel]
+			if m.crashReasonForService(svc.Name) != "" {
+				hasStatus = true
+			}
+		}
+	}
+
+	statusHeight := 0
+	if hasStatus {
+		statusHeight = 1
+	}
+
+	availableHeight := m.height - headerHeight - footerHeight - statusHeight
+	if availableHeight < 5 {
+		availableHeight = 5
+	}
+
+	m.viewport.Width = width
+	m.viewport.Height = availableHeight
+
+	// Only scroll to selection if it changed
+	if m.selectionChanged {
+		m.ensureSelectionVisible()
+		m.selectionChanged = false
+	}
+
+	return m.viewport.View()
+}
+
+// renderTableContent generates the table content as a string
+func (m *topModel) renderTableContent(width int) string {
 	var b strings.Builder
-	for _, line := range m.logLines {
-		b.WriteString(fitLine(line, width))
-		b.WriteString("\n")
-	}
+
+	// Running services section
+	b.WriteString(m.renderTable(width))
+	b.WriteString("\n\n")
+
+	// Managed services section
+	b.WriteString(m.renderManaged(width))
+
 	return b.String()
+}
+
+// initDebugViewport initializes the viewport with test content for debug mode
+func (m *topModel) initDebugViewport() {
+	// Generate 100 lines of test content
+	var lines []string
+	for i := 1; i <= 100; i++ {
+		lines = append(lines, fmt.Sprintf("Debug Line %d: This is test content for viewport scrolling. Use arrow keys, page up/down, or mouse wheel to scroll. Press 'b' to exit debug mode.", i))
+	}
+	content := strings.Join(lines, "\n")
+	m.viewport.SetContent(content)
+	m.viewport.GotoTop()
+}
+
+// renderLogsDebug renders the debug viewport mode
+func (m *topModel) renderLogsDebug(width int) string {
+	// Size viewport to available space
+	headerHeight := 4 // Fixed height for debug header
+	m.viewport.Width = width
+	m.viewport.Height = m.height - headerHeight - 4 // -4 for footer
+
+	return m.viewport.View()
+}
+
+// logsHeaderView returns the header string for logs view mode
+func (m *topModel) logsHeaderView() string {
+	name := "-"
+	if m.logSvc != nil {
+		name = m.logSvc.Name
+	} else if m.logPID > 0 {
+		name = fmt.Sprintf("pid:%d", m.logPID)
+	}
+	return fmt.Sprintf("Logs: %s (b back, f follow:%t)", name, m.followLogs)
 }
 
 func (m topModel) renderHelp(width int) string {
@@ -1325,4 +1674,207 @@ func (m topModel) crashReasonForService(name string) string {
 		}
 	}
 	return ""
+}
+
+// calculateGutterWidth calculates the gutter width based on total line count.
+// The gutter shows line numbers and is used for mouse click navigation.
+func (m topModel) calculateGutterWidth() int {
+	totalLines := m.viewport.TotalLineCount()
+	if totalLines <= 0 {
+		return 0
+	}
+	// Calculate width needed for the largest line number
+	width := len(strconv.Itoa(totalLines))
+	// Add padding for space after line number
+	return width + 1
+}
+
+// handleMouseClick processes mouse click events for the logs viewport.
+// Gutter clicks (left side) jump to the clicked line.
+// Text area clicks (right of gutter) center the clicked line in the viewport.
+func (m *topModel) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// Only handle button press events (not release or motion)
+	if msg.Action != tea.MouseActionPress {
+		return m, nil
+	}
+
+	// Only handle left mouse button
+	if msg.Button != tea.MouseButtonLeft {
+		return m, nil
+	}
+
+	// Check if we have any content
+	if len(m.logLines) == 0 {
+		return m, nil
+	}
+
+	// Calculate gutter width
+	gutterWidth := m.calculateGutterWidth()
+
+	// Determine if click is in gutter or text area
+	clickedInGutter := msg.X < gutterWidth
+
+	// Calculate which line was clicked (relative to viewport)
+	// msg.Y is the row within the viewport
+	clickedLine := msg.Y
+
+	// Adjust for viewport's current offset to get absolute line number
+	absoluteLine := clickedLine + m.viewport.YOffset
+
+	// Ensure the line is within valid range
+	if absoluteLine < 0 || absoluteLine >= len(m.logLines) {
+		return m, nil
+	}
+
+	if clickedInGutter {
+		// Gutter click: jump viewport so clicked line is at top
+		m.viewport.GotoTop()
+		// Use LineDown to position the clicked line at the top
+		m.viewport.LineDown(absoluteLine)
+	} else {
+		// Text click: center the clicked line in viewport
+		visibleLines := m.viewport.VisibleLineCount()
+		if visibleLines > 0 {
+			// Calculate offset to center the line
+			centerOffset := absoluteLine - (visibleLines / 2)
+			if centerOffset < 0 {
+				centerOffset = 0
+			}
+			m.viewport.SetYOffset(centerOffset)
+		}
+	}
+
+	return m, nil
+}
+
+// handleEnterKey processes the Enter key action for the current selection.
+// For running services: opens logs view
+// For managed services: starts the service
+func (m *topModel) handleEnterKey() (tea.Model, tea.Cmd) {
+	if m.focus == focusManaged {
+		managed := m.managedServices()
+		if m.managedSel >= 0 && m.managedSel < len(managed) {
+			if err := m.app.StartCmd(managed[m.managedSel].Name); err != nil {
+				m.cmdStatus = err.Error()
+			} else {
+				name := managed[m.managedSel].Name
+				m.cmdStatus = fmt.Sprintf("Started %q", name)
+				m.starting[name] = time.Now()
+			}
+			m.refresh()
+			return m, nil
+		}
+	}
+	if m.focus == focusRunning {
+		visible := m.visibleServers()
+		if m.selected >= 0 && m.selected < len(visible) {
+			srv := visible[m.selected]
+			if srv.ManagedService == nil {
+				m.mode = viewModeLogs
+				m.logSvc = nil
+				m.logPID = srv.ProcessRecord.PID
+				m.viewportNeedsTop = true
+				return m, m.tailLogsCmd()
+			}
+			m.mode = viewModeLogs
+			m.logSvc = srv.ManagedService
+			m.logPID = 0
+			m.viewportNeedsTop = true
+			return m, m.tailLogsCmd()
+		}
+	}
+	return m, nil
+}
+
+// handleTableMouseClick processes mouse click events for the table view.
+// It determines which row was clicked and updates the selection accordingly.
+// Double-click on a running service opens logs (equivalent to pressing Enter).
+func (m *topModel) handleTableMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	visible := m.visibleServers()
+	managed := m.managedServices()
+
+	// Screen layout before viewport:
+	// - Line 0: Title ("Dev Process Tracker - Health Monitor...")
+	// - Line 1: Context ("Focus: running | Sort: recent...")
+	// - Line 2+: Viewport content starts here
+	//
+	// msg.Y is screen-relative, so we need to subtract header offset
+	// to get viewport-relative Y coordinate.
+	headerOffset := 2 // Title (1) + Context (1)
+
+	// Convert screen Y to viewport-relative Y
+	viewportY := msg.Y - headerOffset
+	if viewportY < 0 {
+		return m, nil // Click was in header area
+	}
+
+	// Calculate absolute line number within viewport content
+	absoluteLine := viewportY + m.viewport.YOffset
+
+	// Table content layout (within viewport):
+	// Running section:
+	//   - Header line (0)
+	//   - Divider line (1)
+	//   - Data rows (2 to 2+len(visible)-1)
+	//   - Blank lines (2+len(visible), 2+len(visible)+1)
+	// Managed section:
+	//   - Header line (2+len(visible)+2)
+	//   - Data rows starting at (2+len(visible)+3)
+
+	runningDataStart := 2
+	runningDataEnd := runningDataStart + len(visible) - 1
+	blankLinesEnd := runningDataEnd + 1 // +1 for blank line between sections (the "\n\n" creates 1 visual blank line)
+	managedHeaderLine := blankLinesEnd + 1
+	managedDataStart := managedHeaderLine + 1
+
+	// Check for double-click (same Y position within 500ms)
+	const doubleClickThreshold = 500 * time.Millisecond
+	isDoubleClick := !m.lastClickTime.IsZero() &&
+		time.Since(m.lastClickTime) < doubleClickThreshold &&
+		m.lastClickY == msg.Y
+
+	// Update last click tracking
+	m.lastClickTime = time.Now()
+	m.lastClickY = msg.Y
+
+	// Check if click is in running services section
+	if absoluteLine >= runningDataStart && absoluteLine <= runningDataEnd {
+		newSelected := absoluteLine - runningDataStart
+		if newSelected >= 0 && newSelected < len(visible) {
+			// If double-click on running service, open logs (Enter key behavior)
+			if isDoubleClick && m.selected == newSelected {
+				m.focus = focusRunning
+				m.selectionChanged = true
+				m.lastInput = time.Now()
+				// Trigger Enter key behavior - open logs for running service
+				return m.handleEnterKey()
+			}
+			m.selected = newSelected
+			m.focus = focusRunning
+			m.selectionChanged = true
+			m.lastInput = time.Now()
+		}
+		return m, nil
+	}
+
+	// Check if click is in managed services section
+	if absoluteLine >= managedDataStart {
+		newManagedSel := absoluteLine - managedDataStart
+		if newManagedSel >= 0 && newManagedSel < len(managed) {
+			// If double-click on managed service, open logs (Enter key behavior)
+			if isDoubleClick && m.managedSel == newManagedSel {
+				m.focus = focusManaged
+				m.selectionChanged = true
+				m.lastInput = time.Now()
+				// Trigger Enter key behavior - open logs for managed service
+				return m.handleEnterKey()
+			}
+			m.managedSel = newManagedSel
+			m.focus = focusManaged
+			m.selectionChanged = true
+			m.lastInput = time.Now()
+		}
+	}
+
+	return m, nil
 }

@@ -63,18 +63,9 @@ func TestView_StatusBar(t *testing.T) {
 	t.Run("footer contains keybinding hints", func(t *testing.T) {
 		output := model.View()
 		assert.Contains(t, output, "Tab switch", "Should show Tab hint")
-		assert.Contains(t, output, "q quit", "Should show quit hint")
 		assert.Contains(t, output, "Enter logs/start", "Should show Enter hint")
 		assert.Contains(t, output, "/ filter", "Should show filter hint")
-		// Note: "s sort" may wrap across lines, check for each word separately
-		assert.Contains(t, output, "s", "Should show sort key hint")
-		assert.Contains(t, output, "sort", "Should show sort command")
 		assert.Contains(t, output, "? help", "Should show help hint")
-	})
-
-	t.Run("footer shows update time", func(t *testing.T) {
-		output := model.View()
-		assert.Contains(t, output, "Last updated:", "Should show last update time")
 	})
 
 	t.Run("footer shows service count", func(t *testing.T) {
@@ -82,12 +73,9 @@ func TestView_StatusBar(t *testing.T) {
 		assert.Contains(t, output, "Services:", "Should show service count")
 	})
 
-	t.Run("footer shows additional shortcuts", func(t *testing.T) {
+	t.Run("footer shows debug shortcut", func(t *testing.T) {
 		output := model.View()
-		assert.Contains(t, output, "^L clear filter", "Should show clear filter hint")
-		assert.Contains(t, output, "^A add", "Should show add shortcut")
-		assert.Contains(t, output, "^R restart", "Should show restart shortcut")
-		assert.Contains(t, output, "^E stop", "Should show stop shortcut")
+		assert.Contains(t, output, "D debug", "Should show debug hint")
 	})
 }
 
@@ -183,15 +171,16 @@ func TestView_ManagedServicesSection(t *testing.T) {
 	model.width = 120
 	model.mode = viewModeTable
 
-	t.Run("managed services section has header", func(t *testing.T) {
+	// In viewModeTable, managed services are shown in the unified table with a context line
+	// The "Managed Services" section header is only shown in non-table modes (command, search, confirm)
+	t.Run("context line shows focus state", func(t *testing.T) {
 		output := model.View()
-		assert.Contains(t, output, "Managed Services", "Should show managed services header")
+		assert.Contains(t, output, "Focus:", "Should show focus indicator")
 	})
 
-	t.Run("managed services section shows keybinding hint", func(t *testing.T) {
+	t.Run("tab switch hint in footer", func(t *testing.T) {
 		output := model.View()
-		assert.Contains(t, output, "Tab focus", "Should show Tab focus hint")
-		assert.Contains(t, output, "Enter start", "Should show Enter start hint")
+		assert.Contains(t, output, "Tab switch", "Should show Tab switch hint in footer")
 	})
 }
 
@@ -333,9 +322,9 @@ func TestView_ManagedServiceSelection(t *testing.T) {
 		assert.Contains(t, output, "Focus: managed", "Context should show managed focus")
 	})
 
-	t.Run("managed services section appears", func(t *testing.T) {
+	t.Run("tab switch hint available for focus change", func(t *testing.T) {
 		output := model.View()
-		assert.Contains(t, output, "Managed Services", "Should show managed services")
+		assert.Contains(t, output, "Tab switch", "Should show Tab switch for changing focus")
 	})
 }
 

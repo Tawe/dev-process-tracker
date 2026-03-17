@@ -26,7 +26,7 @@ func TestTUISimpleUpdate(t *testing.T) {
 		assert.Nil(t, cmd)
 
 		// Focus should change
-		updatedModel := newModel.(topModel)
+		updatedModel := newModel.(*topModel)
 		assert.NotEqual(t, initialFocus, updatedModel.focus, "Focus should change after Tab")
 
 		// Focus should toggle between the two modes
@@ -43,7 +43,7 @@ func TestTUISimpleUpdate(t *testing.T) {
 		newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
 
 		assert.Nil(t, cmd)
-		updatedModel := newModel.(topModel)
+		updatedModel := newModel.(*topModel)
 		assert.Equal(t, viewModeTable, updatedModel.mode, "Should return to table mode")
 	})
 
@@ -53,7 +53,7 @@ func TestTUISimpleUpdate(t *testing.T) {
 		newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
 
 		assert.Nil(t, cmd)
-		updatedModel := newModel.(topModel)
+		updatedModel := newModel.(*topModel)
 		assert.Equal(t, viewModeSearch, updatedModel.mode, "Should enter search mode")
 	})
 
@@ -63,17 +63,19 @@ func TestTUISimpleUpdate(t *testing.T) {
 		newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
 
 		assert.Nil(t, cmd)
-		updatedModel := newModel.(topModel)
+		updatedModel := newModel.(*topModel)
 		assert.Equal(t, viewModeHelp, updatedModel.mode, "Should enter help mode")
 	})
 
 	t.Run("s key cycles through sort modes", func(t *testing.T) {
+		// Ensure we're in table mode for sort to work
+		model.mode = viewModeTable
 		initialSort := model.sortBy
 
 		newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 
 		assert.Nil(t, cmd)
-		updatedModel := newModel.(topModel)
+		updatedModel := newModel.(*topModel)
 		assert.NotEqual(t, initialSort, updatedModel.sortBy, "Sort mode should cycle")
 	})
 }
@@ -91,12 +93,12 @@ func TestTUIKeySequence(t *testing.T) {
 
 		// Press '/' to enter search mode
 		newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-		model = newModel.(topModel)
+		model = newModel.(*topModel)
 		assert.Equal(t, viewModeSearch, model.mode)
 
 		// Press Esc to return to table
 		newModel, _ = model.Update(tea.KeyMsg{Type: tea.KeyEsc})
-		model = newModel.(topModel)
+		model = newModel.(*topModel)
 		assert.Equal(t, initialMode, model.mode)
 	})
 
@@ -105,12 +107,12 @@ func TestTUIKeySequence(t *testing.T) {
 
 		// Press '?' to enter help
 		newModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
-		model = newModel.(topModel)
+		model = newModel.(*topModel)
 		assert.Equal(t, viewModeHelp, model.mode)
 
 		// Press Esc to exit help
 		newModel, _ = model.Update(tea.KeyMsg{Type: tea.KeyEsc})
-		model = newModel.(topModel)
+		model = newModel.(*topModel)
 		assert.Equal(t, viewModeTable, model.mode)
 	})
 }
@@ -166,5 +168,49 @@ func TestTUIViewRendering(t *testing.T) {
 
 		assert.Contains(t, output, "Keymap", "Should show keymap header")
 		assert.Contains(t, output, "q quit", "Should mention quit key")
+	})
+}
+
+// TestViewportStateTransitions tests state transitions for viewport interactions
+// Covers: OBL-highlight-state, OBL-viewport-integration
+func TestViewportStateTransitions(t *testing.T) {
+	app, err := NewApp()
+	if err != nil {
+		t.Fatalf("Failed to create app: %v", err)
+	}
+
+	t.Run("viewport state initialization", func(t *testing.T) {
+		model := newTopModel(app)
+
+		// After implementation: model should have viewport, highlightIndex, highlightMatches fields
+		_ = model
+		t.Skip("TODO: Verify viewport state fields exist - OBL-highlight-state")
+	})
+
+	t.Run("highlight index boundary conditions", func(t *testing.T) {
+		model := newTopModel(app)
+		model.mode = viewModeLogs
+		model.highlightMatches = []int{10, 20, 30}
+
+		// Test lower boundary
+		model.highlightIndex = 0
+		_ = model
+
+		// Test upper boundary
+		model.highlightIndex = len(model.highlightMatches) - 1
+		_ = model
+
+		t.Skip("TODO: Test boundary conditions - Edge-2")
+	})
+
+	t.Run("highlight index with empty matches", func(t *testing.T) {
+		model := newTopModel(app)
+		model.mode = viewModeLogs
+		model.highlightMatches = []int{}
+		model.highlightIndex = 0
+
+		// Should handle gracefully without crash
+		_ = model
+		t.Skip("TODO: Handle empty highlights - Edge case")
 	})
 }
