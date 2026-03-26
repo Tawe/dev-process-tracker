@@ -65,9 +65,19 @@ func (a *App) discoverServers() ([]*models.ServerInfo, error) {
 		return nil, fmt.Errorf("failed to scan processes: %w", err)
 	}
 
-	// Filter to keep only development processes
+	// Get managed services and their PIDs before filtering
+	// This ensures processes belonging to managed services are never filtered out
+	managedServices := a.registry.ListServices()
+	managedPIDs := make(map[int]bool)
+	for _, svc := range managedServices {
+		if svc.LastPID != nil && *svc.LastPID > 0 {
+			managedPIDs[*svc.LastPID] = true
+		}
+	}
+
+	// Filter to keep only development processes (or managed service processes)
 	commandMap := a.getCommandMap(processes)
-	processes = scanner.FilterDevProcesses(processes, commandMap)
+	processes = scanner.FilterDevProcesses(processes, commandMap, managedPIDs)
 
 	for _, proc := range processes {
 		if proc.CWD != "" {
@@ -91,7 +101,6 @@ func (a *App) discoverServers() ([]*models.ServerInfo, error) {
 		})
 	}
 
-	managedServices := a.registry.ListServices()
 	portOwners := make(map[int][]*models.ManagedService)
 	for _, svc := range managedServices {
 		for _, port := range svc.Ports {
