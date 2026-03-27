@@ -815,7 +815,12 @@ func (m topModel) renderTable(width int) string {
 	if m.selected >= 0 && m.selected < len(visible) {
 		selectedLine := rowFirstLineIdx[m.selected]
 		if selectedLine >= 2 && selectedLine < len(lines) {
-			lines[selectedLine] = lipgloss.NewStyle().Background(lipgloss.Color("57")).Foreground(lipgloss.Color("15")).Render(lines[selectedLine])
+			// Use purple when this section has focus, gray otherwise
+			bgColor := "8" // gray
+			if m.focus == focusRunning {
+				bgColor = "57" // purple
+			}
+			lines[selectedLine] = lipgloss.NewStyle().Background(lipgloss.Color(bgColor)).Foreground(lipgloss.Color("15")).Render(lines[selectedLine])
 		}
 	}
 
@@ -950,8 +955,13 @@ func (m topModel) renderManaged(width int) string {
 		}
 
 		line = fitLine(line, width)
-		if m.focus == focusManaged && i == m.managedSel {
-			line = lipgloss.NewStyle().Background(lipgloss.Color("57")).Foreground(lipgloss.Color("15")).Render(line)
+		if i == m.managedSel {
+			// Use purple when this section has focus, gray otherwise
+			bgColor := "8" // gray
+			if m.focus == focusManaged {
+				bgColor = "57" // purple
+			}
+			line = lipgloss.NewStyle().Background(lipgloss.Color(bgColor)).Foreground(lipgloss.Color("15")).Render(line)
 		}
 		b.WriteString(line)
 		b.WriteString("\n")
@@ -1862,8 +1872,9 @@ func (m *topModel) handleTableMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) 
 				// Trigger Enter key behavior - open logs for running service
 				return m.handleEnterKey()
 			}
+			// Single click: change selection but not focus
+			// This allows seeing the gray highlight in the inactive section
 			m.selected = newSelected
-			m.focus = focusRunning
 			m.selectionChanged = true
 			m.lastInput = time.Now()
 		}
@@ -1874,16 +1885,17 @@ func (m *topModel) handleTableMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) 
 	if absoluteLine >= managedDataStart {
 		newManagedSel := absoluteLine - managedDataStart
 		if newManagedSel >= 0 && newManagedSel < len(managed) {
-			// If double-click on managed service, open logs (Enter key behavior)
+			// If double-click on managed service, start it (Enter key behavior)
 			if isDoubleClick && m.managedSel == newManagedSel {
 				m.focus = focusManaged
 				m.selectionChanged = true
 				m.lastInput = time.Now()
-				// Trigger Enter key behavior - open logs for managed service
+				// Trigger Enter key behavior - start managed service
 				return m.handleEnterKey()
 			}
+			// Single click: change selection but not focus
+			// This allows seeing the gray highlight in the inactive section
 			m.managedSel = newManagedSel
-			m.focus = focusManaged
 			m.selectionChanged = true
 			m.lastInput = time.Now()
 		}
