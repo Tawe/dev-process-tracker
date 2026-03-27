@@ -59,7 +59,7 @@ func (m *topModel) baseViewContent(width int) string {
 	case viewModeLogsDebug:
 		b.WriteString(m.renderLogsDebug(width))
 		b.WriteString("\n")
-	case viewModeTable:
+	case viewModeTable, viewModeSearch:
 		b.WriteString(m.table.Render(m, width))
 		b.WriteString("\n")
 	}
@@ -76,12 +76,7 @@ func (m *topModel) baseViewContent(width int) string {
 		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(fitLine("Esc to go back", width)))
 		b.WriteString("\n")
 	}
-	if m.mode == viewModeSearch {
-		b.WriteString("\n")
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render(fitLine("/"+m.searchQuery, width)))
-		b.WriteString("\n")
-	}
-	if m.mode == viewModeTable {
+	if m.mode == viewModeTable || m.mode == viewModeSearch {
 		if sl := m.renderStatusLine(width); sl != "" {
 			b.WriteString(sl)
 			b.WriteString("\n")

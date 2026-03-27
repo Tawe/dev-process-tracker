@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/devports/devpt/pkg/models"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -55,6 +56,44 @@ func TestTUISimpleUpdate(t *testing.T) {
 		assert.Nil(t, cmd)
 		updatedModel := newModel.(*topModel)
 		assert.NotEqual(t, initialSort, updatedModel.sortBy)
+	})
+
+	t.Run("enter opens logs for running selection", func(t *testing.T) {
+		model := newTestModel()
+		model.mode = viewModeTable
+		model.focus = focusRunning
+		model.selected = 0
+
+		newModel, cmd := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		assert.NotNil(t, cmd)
+
+		updatedModel := newModel.(*topModel)
+		assert.Equal(t, viewModeLogs, updatedModel.mode)
+		assert.Equal(t, 1001, updatedModel.logPID)
+	})
+
+	t.Run("enter starts service for managed selection", func(t *testing.T) {
+		model := newTopModel(&fakeAppDeps{
+			servers: []*models.ServerInfo{
+				{
+					ManagedService: &models.ManagedService{Name: "test-svc", CWD: "/tmp/app", Command: "npm run dev", Ports: []int{3000}},
+					ProcessRecord:  &models.ProcessRecord{PID: 1001, Port: 3000, Command: "node server.js", CWD: "/tmp/app", ProjectRoot: "/tmp/app"},
+				},
+			},
+			services: []*models.ManagedService{
+				{Name: "test-svc", CWD: "/tmp/app", Command: "npm run dev", Ports: []int{3000}},
+			},
+		})
+		model.mode = viewModeTable
+		model.focus = focusManaged
+		model.managedSel = 0
+
+		newModel, cmd := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		assert.Nil(t, cmd)
+
+		updatedModel := newModel.(*topModel)
+		assert.Equal(t, viewModeTable, updatedModel.mode)
+		assert.Contains(t, updatedModel.cmdStatus, `Started "test-svc"`)
 	})
 }
 

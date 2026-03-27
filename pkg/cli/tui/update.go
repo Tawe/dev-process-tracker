@@ -223,6 +223,16 @@ func (m *topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, nil
+		case key.Matches(msg, m.keys.Enter):
+			switch m.mode {
+			case viewModeTable:
+				if m.activeModalKind() == modalConfirm {
+					cmd := m.executeConfirm(true)
+					return m, cmd
+				}
+				return m.handleEnterKey()
+			}
+			return m, nil
 		case key.Matches(msg, m.keys.Confirm):
 			if m.activeModalKind() == modalConfirm {
 				cmd := m.executeConfirm(true)
@@ -242,16 +252,6 @@ func (m *topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tableFollowSelection = false
 			cmd := m.table.updateFocusedViewport(m.focus, msg)
 			return m, cmd
-		case key.Matches(msg, m.keys.Enter):
-			switch m.mode {
-			case viewModeTable:
-				if m.activeModalKind() == modalConfirm {
-					cmd := m.executeConfirm(true)
-					return m, cmd
-				}
-				return m.handleEnterKey()
-			}
-			return m, nil
 		default:
 			return m, nil
 		}

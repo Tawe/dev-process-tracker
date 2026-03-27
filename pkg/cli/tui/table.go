@@ -87,9 +87,11 @@ func (m *topModel) hasStatusLine() bool {
 }
 
 func (m *topModel) renderContext(width int) string {
-	filter := m.searchQuery
-	if strings.TrimSpace(filter) == "" {
-		filter = "none"
+	filter := "none"
+	if m.mode == viewModeSearch {
+		filter = "[" + m.searchQuery + "]"
+	} else if strings.TrimSpace(m.searchQuery) != "" {
+		filter = m.searchQuery
 	}
 	ctx := fmt.Sprintf("Services: %d | Sort: %s | Filter: %s", m.countVisible(), sortModeLabel(m.sortBy), filter)
 	s := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))

@@ -281,13 +281,14 @@ func TestView_SearchMode(t *testing.T) {
 
 	t.Run("search prompt shows query", func(t *testing.T) {
 		output := model.View().Content
-		assert.Contains(t, output, "/node")
+		assert.Contains(t, output, "Filter: [node]")
+		assert.Contains(t, output, "Name")
 	})
 
-	t.Run("empty search shows slash", func(t *testing.T) {
+	t.Run("empty search shows inline input", func(t *testing.T) {
 		model.searchQuery = ""
 		output := model.View().Content
-		assert.Contains(t, output, "/")
+		assert.Contains(t, output, "Filter: []")
 	})
 }
 
@@ -448,7 +449,8 @@ func TestView_ModeTransitions(t *testing.T) {
 		model.mode = viewModeSearch
 		output := model.View().Content
 		assert.NotEmpty(t, output)
-		assert.Contains(t, output, "/")
+		assert.Contains(t, output, "Filter: [")
+		assert.Contains(t, output, "Name")
 	})
 
 	t.Run("help mode renders", func(t *testing.T) {
