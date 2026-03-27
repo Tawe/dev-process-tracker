@@ -1,13 +1,5 @@
 # Dev Process Tracker - Quick Start Guide
 
-## What is Dev Process Tracker?
-
-Dev Process Tracker is a macOS CLI tool that helps you discover, track, and manage local development servers and ports. It answers three key questions:
-
-1. **What servers are running?** - Lists all TCP listening ports on your machine
-2. **Which project owns each server?** - Associates ports with their project roots
-3. **Who started each server?** - Detects if an AI agent started the server
-
 ## Installation
 
 Build from source:
@@ -25,24 +17,21 @@ Then use from anywhere:
 ```bash
 devpt ls
 ```
+## First steps
 
-## First Steps
-
-### See what's currently running
+### See running services
 
 ```bash
 devpt ls
 ```
 
-Shows all discovered listening ports with their PID, project, and source.
+Shows listening ports with PID, project, and source.
 
-### Register a service you manage
+### Register a managed service
 
 ```bash
 devpt add myapp ~/myapp "npm start" 3000
 ```
-
-This stores `myapp` in your registry so you can control it with devpt.
 
 ### List with details
 
@@ -50,15 +39,11 @@ This stores `myapp` in your registry so you can control it with devpt.
 devpt ls --details
 ```
 
-Shows the full command that each process is running.
-
 ### Check your registered services
 
 ```bash
 cat ~/.config/devpt/registry.json
 ```
-
-Your services are stored here and can be edited manually.
 
 ## Common Workflows
 
@@ -68,7 +53,7 @@ Your services are stored here and can be edited manually.
 devpt start myapp
 ```
 
-Logs are captured to: `~/.config/devpt/logs/myapp/<timestamp>.log`
+Logs are written to `~/.config/devpt/logs/myapp/<timestamp>.log`
 
 ### Start multiple services at once
 
@@ -80,20 +65,12 @@ devpt start api frontend worker
 devpt start 'web-*'        # Starts all services matching 'web-*'
 devpt start '*-test'       # Starts all services ending with '-test'
 
-# Target specific service by port
+# Target a specific service by name:port
 devpt start web-api:3000   # Start web-api on port 3000 only
+devpt stop "some:thing"    # Literal service name containing a colon
 
 # Mix patterns and specific names
 devpt start api 'web-*' worker
-```
-
-Batch operations show per-service status and a summary:
-```
-api: started (PID 12345)
-frontend: started (PID 12346)
-worker: started (PID 12347)
-
-All services started successfully
 ```
 
 ### Stop a service by name
@@ -111,7 +88,7 @@ devpt stop api frontend
 # Use glob patterns (quote to prevent shell expansion)
 devpt stop 'web-*'        # Stops all services matching 'web-*'
 
-# Target specific service by port
+# Target a specific service by name:port
 devpt stop web-api:3000   # Stop web-api on port 3000 only
 devpt stop *-test         # Stops all services ending with '-test'
 ```
@@ -146,36 +123,19 @@ devpt logs myapp
 devpt logs myapp --lines 100
 ```
 
-## Key Concepts
+### Use the TUI
 
-### Server Sources
+```bash
+devpt
+```
 
-Each server is tagged with a source:
-
-- **manual** - Running but not in your managed registry
-- **managed** - In your registry (may or may not be running)
-- **agent:xxx** - Started by an AI coding agent
-
-### Project Detection
-
-Dev Process Tracker walks up the directory tree looking for:
-- `.git` (Git repos)
-- `package.json` (Node.js)
-- `go.mod` (Go)
-- `Gemfile` (Ruby)
-- `composer.json` (PHP)
-- And more...
-
-### Agent Detection
-
-Detects servers likely started by:
-- OpenCode
-- Cursor
-- Claude
-- Gemini
-- Copilot
-
-Uses heuristics like parent process name, TTY attachment, and environment variables.
+Key interactions:
+- `Tab` switches between the running-services table and the managed-services list
+- `Enter` opens logs from the top table and starts the selected service from the bottom list
+- `/` opens inline filter editing in the footer
+- `?` opens the help modal
+- mouse click selects rows and mouse wheel scrolls the active pane
+- logs header shows `Logs: <service> | Port: <port> | PID: <pid>`
 
 ## File Locations
 
@@ -190,12 +150,13 @@ Uses heuristics like parent process name, TTY attachment, and environment variab
         └── 2026-02-09T16-10-00.log
 ```
 
-## Tips & Tricks
+## Notes
 
 1. **Edit registry manually** - `~/.config/devpt/registry.json` is just JSON
 2. **Check what's using a port** - `devpt ls --details | grep :3000`
 3. **Find projects** - `devpt ls | grep "my-project"`
 4. **See processes without names** - `devpt ls --details | grep -v "^-"`
+5. **Quote glob patterns** - use `'web-*'` instead of `web-*` to avoid shell expansion
 
 ## Troubleshooting
 
@@ -219,25 +180,8 @@ devpt ls | grep myapp
 kill -9 <PID>
 ```
 
-## Performance
-
-- `devpt ls` typically completes in 1-2 seconds
-- No background daemon (everything is on-demand)
-- Results are fresh on each run
-
-## What's Next?
-
-- Register your frequently-used dev servers
-- Check the `README.md` for full documentation
-- Explore the `--details` flag to see more info
-- Set up the servers you manage with `devpt add`
-
-## Need Help?
+## Help
 
 ```bash
 devpt help
-devpt ls --help
-devpt add --help
 ```
-
-Or see the full README.md for detailed documentation.
