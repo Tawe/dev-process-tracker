@@ -240,9 +240,8 @@ func (m *topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "pgup", "pgdown", "home", "end":
-			var cmd tea.Cmd
 			m.tableFollowSelection = false
-			m.table.vp, cmd = m.table.updateViewport(msg)
+			cmd := m.table.updateFocusedViewport(m.focus, msg)
 			return m, cmd
 		case "enter":
 			switch m.mode {
@@ -262,9 +261,9 @@ func (m *topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if _, ok := msg.(tea.MouseClickMsg); ok && mouse.Button == tea.MouseLeft {
 				return m.handleTableMouseClick(msg)
 			}
-			var cmd tea.Cmd
 			m.tableFollowSelection = false
-			m.table.vp, cmd = m.table.updateViewport(msg)
+			viewportY := mouse.Y - 2
+			cmd := m.table.updateViewportForTableY(viewportY, msg)
 			return m, cmd
 		}
 		if m.mode == viewModeLogs {

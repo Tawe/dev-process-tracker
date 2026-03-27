@@ -329,12 +329,7 @@ func (m *topModel) handleTableMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) 
 		return m, nil
 	}
 
-	absoluteLine := viewportY + m.table.viewYOffset()
-
 	runningDataStart := 2
-	runningDataEnd := runningDataStart + len(visible) - 1
-	managedHeaderLine := runningDataEnd + 1
-	managedDataStart := managedHeaderLine + 1
 
 	const doubleClickThreshold = 500 * time.Millisecond
 	isDoubleClick := !m.lastClickTime.IsZero() &&
@@ -344,7 +339,12 @@ func (m *topModel) handleTableMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) 
 	m.lastClickTime = time.Now()
 	m.lastClickY = mouse.Y
 
-	if absoluteLine >= runningDataStart && absoluteLine <= runningDataEnd {
+	if viewportY < m.table.lastRunningHeight {
+		absoluteLine := viewportY + m.table.runningYOffset()
+		runningDataEnd := runningDataStart + len(visible) - 1
+		if absoluteLine < runningDataStart || absoluteLine > runningDataEnd {
+			return m, nil
+		}
 		newSelected := absoluteLine - runningDataStart
 		if newSelected >= 0 && newSelected < len(visible) {
 			if isDoubleClick && m.selected == newSelected {
@@ -361,20 +361,28 @@ func (m *topModel) handleTableMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) 
 		return m, nil
 	}
 
-	if absoluteLine >= managedDataStart {
-		newManagedSel := absoluteLine - managedDataStart
-		if newManagedSel >= 0 && newManagedSel < len(managed) {
-			if isDoubleClick && m.managedSel == newManagedSel {
-				m.focus = focusManaged
-				m.tableFollowSelection = true
-				m.lastInput = time.Now()
-				return m.handleEnterKey()
-			}
+	if viewportY == m.table.lastRunningHeight {
+		return m, nil
+	}
+
+	managedViewportY := viewportY - m.table.lastRunningHeight - 1
+	if managedViewportY < 0 || managedViewportY >= m.table.lastManagedHeight {
+		return m, nil
+	}
+
+	absoluteManagedLine := managedViewportY + m.table.managedYOffset()
+	newManagedSel := absoluteManagedLine
+	if newManagedSel >= 0 && newManagedSel < len(managed) {
+		if isDoubleClick && m.managedSel == newManagedSel {
 			m.focus = focusManaged
-			m.managedSel = newManagedSel
 			m.tableFollowSelection = true
 			m.lastInput = time.Now()
+			return m.handleEnterKey()
 		}
+		m.focus = focusManaged
+		m.managedSel = newManagedSel
+		m.tableFollowSelection = true
+		m.lastInput = time.Now()
 	}
 
 	return m, nil

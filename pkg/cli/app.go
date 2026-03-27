@@ -130,7 +130,17 @@ func (a *App) discoverServers() ([]*models.ServerInfo, error) {
 	}
 
 	portOwners := make(map[int][]*models.ManagedService)
+	rootOwners := make(map[string]int)
+	cwdOwners := make(map[string]int)
 	for _, svc := range managedServices {
+		svcCWD := normalizePath(svc.CWD)
+		if svcCWD != "" {
+			cwdOwners[svcCWD]++
+		}
+		svcRoot := normalizePath(a.resolver.FindProjectRoot(svc.CWD))
+		if svcRoot != "" {
+			rootOwners[svcRoot]++
+		}
 		for _, port := range svc.Ports {
 			portOwners[port] = append(portOwners[port], svc)
 		}
@@ -158,12 +168,7 @@ func (a *App) discoverServers() ([]*models.ServerInfo, error) {
 				}
 				procCWD := normalizePath(server.ProcessRecord.CWD)
 				procRoot := normalizePath(server.ProcessRecord.ProjectRoot)
-				if svcRoot != "" && procRoot != "" && svcRoot == procRoot {
-					server.ManagedService = svc
-					found = true
-					break
-				}
-				if svcCWD != "" && procCWD != "" && svcCWD == procCWD {
+				if canMatchByPath(svcRoot, svcCWD, procRoot, procCWD, rootOwners, cwdOwners) {
 					server.ManagedService = svc
 					found = true
 					break
@@ -302,6 +307,16 @@ func normalizePath(p string) string {
 	p = strings.TrimSpace(p)
 	p = strings.TrimRight(p, "/")
 	return p
+}
+
+func canMatchByPath(svcRoot, svcCWD, procRoot, procCWD string, rootOwners, cwdOwners map[string]int) bool {
+	if svcRoot != "" && procRoot != "" && svcRoot == procRoot && rootOwners[svcRoot] == 1 {
+		return true
+	}
+	if svcCWD != "" && procCWD != "" && svcCWD == procCWD && cwdOwners[svcCWD] == 1 {
+		return true
+	}
+	return false
 }
 
 func warnLegacyManagedCommands(reg *registry.Registry, out io.Writer) {

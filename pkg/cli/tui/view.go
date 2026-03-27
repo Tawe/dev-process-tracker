@@ -17,6 +17,9 @@ func (m *topModel) View() tea.View {
 	if width <= 0 {
 		width = 120
 	}
+	if m.height <= 0 {
+		m.height = 24
+	}
 
 	var b strings.Builder
 	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)

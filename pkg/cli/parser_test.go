@@ -8,66 +8,66 @@ import (
 
 func TestParseNamePortIdentifier(t *testing.T) {
 	tests := []struct {
-		name       string
-		input      string
-		wantName   string
-		wantPort   int
+		name        string
+		input       string
+		wantName    string
+		wantPort    int
 		wantHasPort bool
 	}{
 		{
-			name:       "simple name:port",
-			input:      "web-api:3000",
-			wantName:   "web-api",
-			wantPort:   3000,
+			name:        "simple name:port",
+			input:       "web-api:3000",
+			wantName:    "web-api",
+			wantPort:    3000,
 			wantHasPort: true,
 		},
 		{
-			name:       "name with colon in it",
-			input:      "some:thing:1234",
-			wantName:   "some:thing",
-			wantPort:   1234,
+			name:        "name with colon in it",
+			input:       "some:thing:1234",
+			wantName:    "some:thing",
+			wantPort:    1234,
 			wantHasPort: true,
 		},
 		{
-			name:       "name only - no colon",
-			input:      "web-api",
-			wantName:   "web-api",
-			wantPort:   0,
+			name:        "name only - no colon",
+			input:       "web-api",
+			wantName:    "web-api",
+			wantPort:    0,
 			wantHasPort: false,
 		},
 		{
-			name:       "empty string",
-			input:      "",
-			wantName:   "",
-			wantPort:   0,
+			name:        "empty string",
+			input:       "",
+			wantName:    "",
+			wantPort:    0,
 			wantHasPort: false,
 		},
 		{
-			name:       "single port number",
-			input:      ":8080",
-			wantName:   "",
-			wantPort:   8080,
+			name:        "single port number",
+			input:       ":8080",
+			wantName:    "",
+			wantPort:    8080,
 			wantHasPort: true,
 		},
 		{
-			name:       "name:port with leading zeros",
-			input:      "web-api:0300",
-			wantName:   "web-api",
-			wantPort:   300,
+			name:        "name:port with leading zeros",
+			input:       "web-api:0300",
+			wantName:    "web-api",
+			wantPort:    300,
 			wantHasPort: true,
 		},
 		{
-			name:       "invalid port - not a number after colon",
-			input:      "web-api:abc",
-			wantName:   "web-api:abc",
-			wantPort:   0,
+			name:        "invalid port - not a number after colon",
+			input:       "web-api:abc",
+			wantName:    "web-api:abc",
+			wantPort:    0,
 			wantHasPort: false,
 		},
 		{
-			name:       "multiple colons but last is not port",
-			input:      "some:thing:else",
-			wantName:   "some:thing:else",
-			wantPort:   0,
+			name:        "multiple colons but last is not port",
+			input:       "some:thing:else",
+			wantName:    "some:thing:else",
+			wantPort:    0,
 			wantHasPort: false,
 		},
 	}

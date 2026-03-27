@@ -15,15 +15,20 @@ import (
 )
 
 type processTable struct {
-	vp viewport.Model
+	runningVP viewport.Model
+	managedVP viewport.Model
 
 	aboveLines int
 	belowLines int
+
+	lastRunningHeight int
+	lastManagedHeight int
 }
 
 func newProcessTable() processTable {
 	return processTable{
-		vp:         viewport.New(),
+		runningVP:  viewport.New(),
+		managedVP:  viewport.New(),
 		aboveLines: 2,
 		belowLines: 1,
 	}
@@ -42,16 +47,28 @@ func (t *processTable) heightFor(termHeight int, hasStatus bool) int {
 }
 
 func (t *processTable) Render(m *topModel, width int) string {
-	vpContent := t.renderViewportContent(m, width)
+	totalHeight := t.heightFor(m.height, m.hasStatusLine())
+	runningContent := m.renderRunningTable(width)
+	managedHeader := m.renderManagedHeader(width)
+	managedContent := m.renderManagedSection(width)
+	runningLines := 1 + strings.Count(runningContent, "\n")
+	runningHeight, managedHeight := t.sectionHeights(totalHeight, runningLines)
 
-	t.vp.SetWidth(width)
-	t.vp.SetHeight(t.heightFor(m.height, m.hasStatusLine()))
-	t.vp.SetContent(vpContent)
+	t.lastRunningHeight = runningHeight
+	t.lastManagedHeight = managedHeight
+
+	t.runningVP.SetWidth(width)
+	t.runningVP.SetHeight(runningHeight)
+	t.runningVP.SetContent(runningContent)
+
+	t.managedVP.SetWidth(width)
+	t.managedVP.SetHeight(managedHeight)
+	t.managedVP.SetContent(managedContent)
 	if m.tableFollowSelection {
 		t.scrollToSelection(m)
 	}
 
-	return t.vp.View()
+	return t.runningVP.View() + "\n" + managedHeader + "\n" + t.managedVP.View()
 }
 
 func (m *topModel) hasStatusLine() bool {
@@ -108,37 +125,51 @@ func (m *topModel) renderFooter(width int) string {
 	return s.Render(fitLine(footer, width))
 }
 
-func (t *processTable) renderViewportContent(m *topModel, width int) string {
-	var b strings.Builder
-	b.WriteString(m.renderRunningTable(width))
-	b.WriteString("\n")
-	b.WriteString(m.renderManagedSection(width))
-	return b.String()
+func (t *processTable) sectionHeights(totalHeight, runningLines int) (int, int) {
+	if totalHeight < 3 {
+		return 1, 1
+	}
+
+	separator := 1
+	minManaged := 3
+	maxRunning := totalHeight - separator - minManaged
+	if maxRunning < 1 {
+		maxRunning = 1
+	}
+
+	runningHeight := runningLines
+	if runningHeight > maxRunning {
+		runningHeight = maxRunning
+	}
+	if runningHeight < 1 {
+		runningHeight = 1
+	}
+
+	managedHeight := totalHeight - separator - runningHeight
+	if managedHeight < 1 {
+		managedHeight = 1
+	}
+
+	return runningHeight, managedHeight
 }
 
 func (t *processTable) scrollToSelection(m *topModel) {
 	visible := m.visibleServers()
 	managed := m.managedServices()
 
-	runningLines := len(visible) + 2
-	if len(visible) == 0 {
-		runningLines = 1
-	}
-	blankLine := 1
-	managedHeader := 1
-
-	var selectedLine int
 	if m.focus == focusRunning && m.selected >= 0 && m.selected < len(visible) {
-		selectedLine = 2 + m.selected
+		selectedLine := 2 + m.selected
+		t.scrollViewportToLine(&t.runningVP, selectedLine)
 	} else if m.focus == focusManaged && m.managedSel >= 0 && m.managedSel < len(managed) {
-		selectedLine = runningLines + blankLine + managedHeader + m.managedSel
-	} else {
-		return
+		selectedLine := m.managedSel
+		t.scrollViewportToLine(&t.managedVP, selectedLine)
 	}
+}
 
-	totalLines := t.vp.TotalLineCount()
-	visibleLines := t.vp.VisibleLineCount()
-	currentOffset := t.vp.YOffset()
+func (t *processTable) scrollViewportToLine(vp *viewport.Model, selectedLine int) {
+	totalLines := vp.TotalLineCount()
+	visibleLines := vp.VisibleLineCount()
+	currentOffset := vp.YOffset()
 
 	if selectedLine < currentOffset || selectedLine >= currentOffset+visibleLines {
 		desired := selectedLine - visibleLines/3
@@ -151,7 +182,7 @@ func (t *processTable) scrollToSelection(m *topModel) {
 		if desired < 0 {
 			desired = 0
 		}
-		t.vp.SetYOffset(desired)
+		vp.SetYOffset(desired)
 	}
 }
 
@@ -254,6 +285,16 @@ func (m *topModel) renderRunningTable(width int) string {
 	return out
 }
 
+func (m *topModel) renderManagedHeader(width int) string {
+	text := "Managed Services (Tab focus, Enter start) "
+	fillW := width - runewidth.StringWidth(text)
+	if fillW < 0 {
+		fillW = 0
+	}
+	header := text + strings.Repeat("─", fillW)
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render(fitLine(header, width))
+}
+
 func (m *topModel) renderManagedSection(width int) string {
 	managed := m.managedServices()
 	if len(managed) == 0 {
@@ -268,15 +309,6 @@ func (m *topModel) renderManagedSection(width int) string {
 	}
 
 	var b strings.Builder
-	text := "Managed Services (Tab focus, Enter start) "
-	fillW := width - runewidth.StringWidth(text)
-	if fillW < 0 {
-		fillW = 0
-	}
-	header := text + strings.Repeat("─", fillW)
-	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render(fitLine(header, width)))
-	b.WriteString("\n")
-
 	for i, svc := range managed {
 		state := m.serviceStatus(svc.Name)
 		if state == "stopped" {
@@ -309,18 +341,53 @@ func (m *topModel) renderManagedSection(width int) string {
 			line = lipgloss.NewStyle().Background(lipgloss.Color(bg)).Foreground(lipgloss.Color("15")).Render(line)
 		}
 		b.WriteString(line)
-		b.WriteString("\n")
+		if i < len(managed)-1 {
+			b.WriteString("\n")
+		}
 	}
 
 	return b.String()
 }
 
-func (t *processTable) updateViewport(msg tea.Msg) (viewport.Model, tea.Cmd) {
-	return t.vp.Update(msg)
+func (t *processTable) updateFocusedViewport(focus viewFocus, msg tea.Msg) tea.Cmd {
+	if focus == focusManaged {
+		var cmd tea.Cmd
+		t.managedVP, cmd = t.managedVP.Update(msg)
+		return cmd
+	}
+	var cmd tea.Cmd
+	t.runningVP, cmd = t.runningVP.Update(msg)
+	return cmd
 }
 
-func (t *processTable) viewYOffset() int {
-	return t.vp.YOffset()
+func (t *processTable) updateViewportForTableY(viewportY int, msg tea.Msg) tea.Cmd {
+	if viewportY < 0 {
+		return nil
+	}
+	if viewportY < t.lastRunningHeight {
+		var cmd tea.Cmd
+		t.runningVP, cmd = t.runningVP.Update(msg)
+		return cmd
+	}
+	if viewportY == t.lastRunningHeight {
+		return nil
+	}
+
+	localManagedY := viewportY - t.lastRunningHeight - 1
+	if localManagedY >= 0 && localManagedY < t.lastManagedHeight {
+		var cmd tea.Cmd
+		t.managedVP, cmd = t.managedVP.Update(msg)
+		return cmd
+	}
+	return nil
+}
+
+func (t *processTable) runningYOffset() int {
+	return t.runningVP.YOffset()
+}
+
+func (t *processTable) managedYOffset() int {
+	return t.managedVP.YOffset()
 }
 
 func pad(n int) string {

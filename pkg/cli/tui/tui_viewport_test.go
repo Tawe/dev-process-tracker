@@ -345,11 +345,11 @@ func TestTableMouseClickSelection(t *testing.T) {
 			}
 		}
 
-		model.table.vp = viewport.New()
-		model.table.vp.SetWidth(80)
-		model.table.vp.SetHeight(10)
+		model.table.runningVP = viewport.New()
+		model.table.runningVP.SetWidth(80)
+		model.table.runningVP.SetHeight(10)
 		_ = model.View()
-		model.table.vp.SetYOffset(5)
+		model.table.runningVP.SetYOffset(5)
 
 		newModel, _ := model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 10, Y: 4})
 		m := newModel.(*topModel)
@@ -385,11 +385,11 @@ func TestTableMouseClickSelection(t *testing.T) {
 		}
 
 		_ = model.View()
-		viewportLines := strings.Split(model.table.vp.View(), "\n")
+		viewportLines := strings.Split(model.table.managedVP.View(), "\n")
 		clickY := -1
 		for i, line := range viewportLines {
 			if strings.Contains(line, "beta [stopped]") {
-				clickY = i + 2
+				clickY = 2 + model.table.lastRunningHeight + 1 + i
 				break
 			}
 		}
@@ -408,8 +408,55 @@ func TestTableMouseClickSelection(t *testing.T) {
 		model.mode = viewModeTable
 		model.width = 80
 		model.height = 12
-		model.selected = 0
+		model.focus = focusManaged
+		model.app = &fakeAppDeps{
+			servers: []*models.ServerInfo{
+				{
+					ProcessRecord: &models.ProcessRecord{PID: 1001, Port: 3000, Command: "node server.js", CWD: "/tmp/app", ProjectRoot: "/tmp/app"},
+					Status:        "running",
+				},
+			},
+		}
+		model.servers = []*models.ServerInfo{
+			{
+				ProcessRecord: &models.ProcessRecord{PID: 1001, Port: 3000, Command: "node server.js", CWD: "/tmp/app", ProjectRoot: "/tmp/app"},
+				Status:        "running",
+			},
+		}
+		fakeDeps := model.app.(*fakeAppDeps)
+		for i := 0; i < 30; i++ {
+			fakeDeps.services = append(fakeDeps.services, &models.ManagedService{
+				Name:    fmt.Sprintf("svc-%02d", i),
+				CWD:     fmt.Sprintf("/tmp/svc-%02d", i),
+				Command: "npm run dev",
+				Ports:   []int{4000 + i},
+			})
+		}
+
+		_ = model.View()
+		initialManagedOffset := model.table.managedVP.YOffset()
+		runningOffset := model.table.runningVP.YOffset()
+		mouseY := 2 + model.table.lastRunningHeight + 2
+
+		newModel, cmd := model.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 10, Y: mouseY})
+		assert.NotNil(t, newModel)
+		assert.Nil(t, cmd)
+
+		updatedModel := newModel.(*topModel)
+		assert.False(t, updatedModel.tableFollowSelection)
+
+		_ = updatedModel.View()
+		assert.Greater(t, updatedModel.table.managedVP.YOffset(), initialManagedOffset)
+		assert.Equal(t, runningOffset, updatedModel.table.runningVP.YOffset())
+	})
+
+	t.Run("wheel scrolling in top grid only moves running section", func(t *testing.T) {
+		model := newTestModel()
+		model.mode = viewModeTable
+		model.width = 80
+		model.height = 12
 		model.focus = focusRunning
+		model.selected = 0
 		model.servers = make([]*models.ServerInfo, 30)
 		for i := 0; i < 30; i++ {
 			model.servers[i] = &models.ServerInfo{
@@ -420,11 +467,20 @@ func TestTableMouseClickSelection(t *testing.T) {
 				},
 			}
 		}
+		model.app = &fakeAppDeps{
+			servers: model.servers,
+			services: []*models.ManagedService{
+				{Name: "alpha", CWD: "/tmp/alpha", Command: "npm run dev", Ports: []int{4100}},
+				{Name: "beta", CWD: "/tmp/beta", Command: "npm run dev", Ports: []int{4200}},
+			},
+		}
 
 		_ = model.View()
-		initialOffset := model.table.vp.YOffset()
+		initialRunningOffset := model.table.runningVP.YOffset()
+		managedOffset := model.table.managedVP.YOffset()
+		mouseY := 4
 
-		newModel, cmd := model.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 10, Y: 5})
+		newModel, cmd := model.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 10, Y: mouseY})
 		assert.NotNil(t, newModel)
 		assert.Nil(t, cmd)
 
@@ -432,6 +488,7 @@ func TestTableMouseClickSelection(t *testing.T) {
 		assert.False(t, updatedModel.tableFollowSelection)
 
 		_ = updatedModel.View()
-		assert.Greater(t, updatedModel.table.vp.YOffset(), initialOffset)
+		assert.Greater(t, updatedModel.table.runningVP.YOffset(), initialRunningOffset)
+		assert.Equal(t, managedOffset, updatedModel.table.managedVP.YOffset())
 	})
 }
