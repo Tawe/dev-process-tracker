@@ -1,20 +1,17 @@
-package cli
+package tui
 
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestCommandModeAcceptsRuneKeys(t *testing.T) {
 	t.Parallel()
 
 	for _, key := range []string{"b", "q", "s", "n"} {
-		m := &topModel{
-			mode: viewModeCommand,
-		}
-
-		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+		m := &topModel{mode: viewModeCommand}
+		next, _ := m.Update(tea.KeyPressMsg{Text: key, Code: rune(key[0])})
 		updated, ok := next.(*topModel)
 		if !ok {
 			t.Fatalf("expected *topModel, got %T", next)
@@ -28,11 +25,8 @@ func TestCommandModeAcceptsRuneKeys(t *testing.T) {
 func TestSearchModeAcceptsRuneKeys(t *testing.T) {
 	t.Parallel()
 
-	m := &topModel{
-		mode: viewModeSearch,
-	}
-
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	m := &topModel{mode: viewModeSearch}
+	next, _ := m.Update(tea.KeyPressMsg{Text: "s", Code: 's'})
 	updated, ok := next.(*topModel)
 	if !ok {
 		t.Fatalf("expected *topModel, got %T", next)

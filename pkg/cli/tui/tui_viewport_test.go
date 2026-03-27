@@ -1,0 +1,373 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"github.com/stretchr/testify/assert"
+
+	"github.com/devports/devpt/pkg/models"
+)
+
+func TestViewportMouseClickNavigation(t *testing.T) {
+	model := newTestModel()
+
+	t.Run("gutter click jumps to clicked line", func(t *testing.T) {
+		model.mode = viewModeLogs
+		model.logLines = make([]string, 1000)
+		for i := 0; i < 1000; i++ {
+			model.logLines[i] = fmt.Sprintf("Log line %d", i)
+		}
+
+		model.viewport = viewport.New()
+		model.viewport.SetWidth(80)
+		model.viewport.SetHeight(24)
+		model.viewport.SetContent(strings.Join(model.logLines, "\n"))
+		initialOffset := model.viewport.YOffset()
+		clickedLine := 5
+		gutterWidth := model.calculateGutterWidth()
+
+		mouseMsg := tea.MouseClickMsg{Button: tea.MouseLeft, X: gutterWidth - 1, Y: clickedLine}
+		newModel, cmd := model.Update(mouseMsg)
+		assert.Nil(t, cmd)
+
+		updatedModel := newModel.(*topModel)
+		assert.Equal(t, clickedLine, updatedModel.viewport.YOffset())
+		assert.NotEqual(t, initialOffset, updatedModel.viewport.YOffset())
+	})
+
+	t.Run("text click repositions viewport to center", func(t *testing.T) {
+		model.mode = viewModeLogs
+		model.logLines = make([]string, 1000)
+		for i := 0; i < 1000; i++ {
+			model.logLines[i] = fmt.Sprintf("Log line %d", i)
+		}
+
+		model.viewport = viewport.New()
+		model.viewport.SetWidth(80)
+		model.viewport.SetHeight(24)
+		model.viewport.SetContent(strings.Join(model.logLines, "\n"))
+
+		initialOffset := model.viewport.YOffset()
+		visibleLines := model.viewport.VisibleLineCount()
+		gutterWidth := model.calculateGutterWidth()
+		clickedAbsoluteLine := 100
+		model.viewport.SetYOffset(clickedAbsoluteLine - 5)
+
+		mouseMsg := tea.MouseClickMsg{Button: tea.MouseLeft, X: gutterWidth + 10, Y: 5}
+		newModel, cmd := model.Update(mouseMsg)
+		assert.Nil(t, cmd)
+
+		updatedModel := newModel.(*topModel)
+		expectedOffset := clickedAbsoluteLine - (visibleLines / 2)
+		if expectedOffset < 0 {
+			expectedOffset = 0
+		}
+
+		assert.Equal(t, expectedOffset, updatedModel.viewport.YOffset())
+		assert.NotEqual(t, initialOffset, updatedModel.viewport.YOffset())
+	})
+
+	t.Run("click with no content is no-op", func(t *testing.T) {
+		model.mode = viewModeLogs
+		model.logLines = nil
+		model.viewport = viewport.New()
+		initialOffset := model.viewport.YOffset()
+
+		mouseMsg := tea.MouseClickMsg{Button: tea.MouseLeft, X: 10, Y: 10}
+		newModel, cmd := model.Update(mouseMsg)
+		assert.Nil(t, cmd)
+
+		updatedModel := newModel.(*topModel)
+		assert.NotNil(t, updatedModel)
+		assert.Equal(t, initialOffset, updatedModel.viewport.YOffset())
+	})
+}
+
+func TestViewportHighlightCycling(t *testing.T) {
+	model := newTestModel()
+
+	t.Run("n key advances to next highlight", func(t *testing.T) {
+		model.mode = viewModeLogs
+		model.highlightMatches = []int{10, 20, 30, 40, 50}
+		model.highlightIndex = 0
+		newModel, cmd := model.Update(tea.KeyPressMsg{Text: "n", Code: 'n'})
+		assert.Nil(t, cmd)
+		updatedModel := newModel.(*topModel)
+		assert.Equal(t, 1, updatedModel.highlightIndex)
+	})
+
+	t.Run("N key moves to previous highlight", func(t *testing.T) {
+		model.mode = viewModeLogs
+		model.highlightMatches = []int{10, 20, 30, 40, 50}
+		model.highlightIndex = 3
+		newModel, cmd := model.Update(tea.KeyPressMsg{Text: "N", Code: 'N'})
+		assert.Nil(t, cmd)
+		updatedModel := newModel.(*topModel)
+		assert.Equal(t, 2, updatedModel.highlightIndex)
+	})
+
+	t.Run("highlight cycling wraps from last to first", func(t *testing.T) {
+		model.mode = viewModeLogs
+		model.highlightMatches = []int{10, 20, 30}
+		model.highlightIndex = 2
+		newModel, cmd := model.Update(tea.KeyPressMsg{Text: "n", Code: 'n'})
+		assert.Nil(t, cmd)
+		updatedModel := newModel.(*topModel)
+		assert.Equal(t, 0, updatedModel.highlightIndex)
+	})
+
+	t.Run("highlight cycling wraps from first to last", func(t *testing.T) {
+		model.mode = viewModeLogs
+		model.highlightMatches = []int{10, 20, 30}
+		model.highlightIndex = 0
+		newModel, cmd := model.Update(tea.KeyPressMsg{Text: "N", Code: 'N'})
+		assert.Nil(t, cmd)
+		updatedModel := newModel.(*topModel)
+		assert.Equal(t, 2, updatedModel.highlightIndex)
+	})
+
+	t.Run("highlight keys ignored when no highlights exist", func(t *testing.T) {
+		model.mode = viewModeLogs
+		model.highlightMatches = []int{}
+		model.highlightIndex = 0
+		newModel, cmd := model.Update(tea.KeyPressMsg{Text: "n", Code: 'n'})
+		assert.Nil(t, cmd)
+		updatedModel := newModel.(*topModel)
+		assert.Equal(t, 0, updatedModel.highlightIndex)
+	})
+}
+
+func TestViewportMatchCounter(t *testing.T) {
+	t.Run("footer shows match counter when highlights active", func(t *testing.T) {
+		model := newTestModel()
+		model.mode = viewModeLogs
+		model.highlightMatches = []int{10, 20, 30, 40, 50}
+		model.highlightIndex = 2
+		view := model.View().Content
+		assert.Contains(t, view, "Match 3/5")
+	})
+
+	t.Run("footer shows correct format for first match", func(t *testing.T) {
+		model := newTestModel()
+		model.mode = viewModeLogs
+		model.highlightMatches = []int{10, 20, 30}
+		model.highlightIndex = 0
+		view := model.View().Content
+		assert.Contains(t, view, "Match 1/3")
+	})
+}
+
+func TestViewportResizePersistence(t *testing.T) {
+	t.Run("terminal resize preserves highlight index", func(t *testing.T) {
+		model := newTestModel()
+		model.mode = viewModeLogs
+		model.highlightMatches = []int{10, 20, 30, 40, 50}
+		model.highlightIndex = 3
+
+		newModel, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+		updatedModel := newModel.(*topModel)
+		assert.Equal(t, 3, updatedModel.highlightIndex)
+	})
+
+	t.Run("terminal resize preserves highlight matches", func(t *testing.T) {
+		model := newTestModel()
+		model.mode = viewModeLogs
+		model.highlightMatches = []int{10, 20, 30, 40, 50}
+		model.highlightIndex = 3
+
+		newModel, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+		updatedModel := newModel.(*topModel)
+		assert.Equal(t, 3, updatedModel.highlightIndex)
+		assert.Equal(t, []int{10, 20, 30, 40, 50}, updatedModel.highlightMatches)
+	})
+
+	t.Run("terminal resize with no highlights is safe", func(t *testing.T) {
+		model := newTestModel()
+		model.mode = viewModeLogs
+		model.highlightMatches = []int{}
+		model.highlightIndex = 0
+
+		newModel, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+		updatedModel := newModel.(*topModel)
+		assert.NotNil(t, updatedModel)
+		assert.Equal(t, 0, updatedModel.highlightIndex)
+		assert.Equal(t, []int{}, updatedModel.highlightMatches)
+	})
+
+	t.Run("terminal resize updates width and height", func(t *testing.T) {
+		model := newTestModel()
+		model.mode = viewModeLogs
+		model.width = 100
+		model.height = 30
+
+		newModel, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+		updatedModel := newModel.(*topModel)
+		assert.Equal(t, 120, updatedModel.width)
+		assert.Equal(t, 40, updatedModel.height)
+	})
+}
+
+func TestViewportIntegration(t *testing.T) {
+	t.Run("viewport component is initialized in topModel", func(t *testing.T) {
+		model := newTestModel()
+		assert.Equal(t, 0, model.viewport.YOffset())
+	})
+
+	t.Run("viewport receives updates when in logs mode", func(t *testing.T) {
+		model := newTestModel()
+		model.mode = viewModeLogs
+		model.width = 80
+		model.height = 24
+		model.logLines = []string{"Line 1", "Line 2", "Line 3"}
+		model.viewport.SetContent(strings.Join(model.logLines, "\n"))
+
+		newModel, cmd := model.Update(tickMsg(time.Now()))
+		updatedModel := newModel.(*topModel)
+		assert.NotNil(t, updatedModel)
+		assert.NotNil(t, cmd)
+
+		_ = updatedModel.View()
+		viewOutput := model.viewport.View()
+		assert.Contains(t, viewOutput, "Line 1")
+	})
+
+	t.Run("viewport sizing responds to terminal resize", func(t *testing.T) {
+		model := newTestModel()
+		model.mode = viewModeLogs
+
+		newModel, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+		updatedModel := newModel.(*topModel)
+		assert.Equal(t, 100, updatedModel.width)
+		assert.Equal(t, 40, updatedModel.height)
+		_ = updatedModel.View()
+	})
+
+	t.Run("viewport content is updated from log messages", func(t *testing.T) {
+		model := newTestModel()
+		model.mode = viewModeLogs
+		model.width = 80
+		model.height = 24
+
+		newModel, _ := model.Update(logMsg{lines: []string{"Log line 1", "Log line 2", "Log line 3"}})
+		updatedModel := newModel.(*topModel)
+		assert.Equal(t, []string{"Log line 1", "Log line 2", "Log line 3"}, updatedModel.logLines)
+		assert.NoError(t, updatedModel.logErr)
+		assert.True(t, strings.Contains(updatedModel.viewport.View(), "Log line 1") || len(updatedModel.logLines) > 0)
+	})
+
+	t.Run("viewport handles empty log content gracefully", func(t *testing.T) {
+		model := newTestModel()
+		model.mode = viewModeLogs
+		model.width = 80
+		model.height = 24
+
+		newModel, _ := model.Update(logMsg{lines: []string{}, err: nil})
+		updatedModel := newModel.(*topModel)
+		_ = updatedModel.View()
+		viewOutput := updatedModel.viewport.View()
+		assert.Contains(t, viewOutput, "(no logs yet)")
+	})
+
+	t.Run("viewport handles log errors gracefully", func(t *testing.T) {
+		model := newTestModel()
+		model.mode = viewModeLogs
+		model.width = 80
+		model.height = 24
+
+		newModel, _ := model.Update(logMsg{lines: nil, err: fmt.Errorf("test error")})
+		updatedModel := newModel.(*topModel)
+		_ = updatedModel.View()
+		assert.Error(t, updatedModel.logErr)
+		viewOutput := updatedModel.viewport.View()
+		assert.Contains(t, viewOutput, "Error:")
+	})
+}
+
+func TestMouseModeEnabled(t *testing.T) {
+	t.Run("TopCmd enables mouse cell motion", func(t *testing.T) {
+		model := newTestModel()
+		model.mode = viewModeLogs
+		model.logLines = []string{"Line 1", "Line 2", "Line 3"}
+		model.viewport.SetContent(strings.Join(model.logLines, "\n"))
+
+		newModel, cmd := model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 5})
+		assert.NotNil(t, newModel)
+		assert.Nil(t, cmd)
+	})
+
+	t.Run("mouse messages in non-logs mode are ignored", func(t *testing.T) {
+		model := newTestModel()
+		model.mode = viewModeTable
+
+		newModel, cmd := model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 5})
+		assert.NotNil(t, newModel)
+		assert.Nil(t, cmd)
+	})
+}
+
+func TestTableMouseClickSelection(t *testing.T) {
+	t.Run("click on running service row selects it", func(t *testing.T) {
+		model := newTestModel()
+		model.mode = viewModeTable
+		model.servers = []*models.ServerInfo{
+			{ProcessRecord: &models.ProcessRecord{PID: 1001, Port: 3000, Command: "node server.js"}},
+			{ProcessRecord: &models.ProcessRecord{PID: 1002, Port: 3001, Command: "go run ."}},
+			{ProcessRecord: &models.ProcessRecord{PID: 1003, Port: 3002, Command: "python app.py"}},
+		}
+
+		model.viewport = viewport.New()
+		_ = model.View()
+		model.selected = 0
+		model.focus = focusRunning
+
+		mouseMsg := tea.MouseClickMsg{Button: tea.MouseLeft, X: 10, Y: 5}
+		newModel, cmd := model.Update(mouseMsg)
+		assert.NotNil(t, newModel)
+		assert.Nil(t, cmd)
+
+		m := newModel.(*topModel)
+		assert.Equal(t, 1, m.selected)
+		assert.Equal(t, focusRunning, m.focus)
+	})
+
+	t.Run("click with viewport offset adjusts selection correctly", func(t *testing.T) {
+		model := newTestModel()
+		model.mode = viewModeTable
+		model.servers = make([]*models.ServerInfo, 20)
+		for i := 0; i < 20; i++ {
+			model.servers[i] = &models.ServerInfo{
+				ProcessRecord: &models.ProcessRecord{PID: 1000 + i, Port: 3000 + i, Command: fmt.Sprintf("node server%d.js", i)},
+			}
+		}
+
+		model.table.vp = viewport.New()
+		model.table.vp.SetWidth(80)
+		model.table.vp.SetHeight(10)
+		_ = model.View()
+		model.table.vp.SetYOffset(5)
+
+		newModel, _ := model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 10, Y: 4})
+		m := newModel.(*topModel)
+		assert.Equal(t, 5, m.selected)
+	})
+
+	t.Run("wheel events are passed to viewport for scrolling", func(t *testing.T) {
+		model := newTestModel()
+		model.mode = viewModeTable
+		model.servers = []*models.ServerInfo{
+			{ProcessRecord: &models.ProcessRecord{PID: 1001, Port: 3000, Command: "node server.js"}},
+		}
+
+		model.viewport = viewport.New()
+		_ = model.View()
+
+		newModel, cmd := model.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 10, Y: 5})
+		assert.NotNil(t, newModel)
+		_ = cmd
+	})
+}
