@@ -139,7 +139,9 @@ func (m *topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cmdStatus = "Filter cleared"
 			return m, nil
 		case key.Matches(msg, m.keys.Sort):
+			// Cycle to next sort mode, reset reverse
 			m.sortBy = (m.sortBy + 1) % sortModeCount
+			m.sortReverse = false
 			return m, nil
 		case key.Matches(msg, m.keys.Health):
 			m.showHealthDetail = !m.showHealthDetail

@@ -15,7 +15,6 @@ import (
 
 type viewMode int
 type viewFocus int
-type sortMode int
 type confirmKind int
 type modalKind int
 
@@ -30,15 +29,6 @@ const (
 const (
 	focusRunning viewFocus = iota
 	focusManaged
-)
-
-const (
-	sortRecent sortMode = iota
-	sortName
-	sortProject
-	sortPort
-	sortHealth
-	sortModeCount
 )
 
 const (
@@ -96,7 +86,9 @@ type topModel struct {
 	healthLast       time.Time
 	healthChk        *health.Checker
 
-	sortBy sortMode
+	sortBy       sortMode
+	sortReverse  bool
+	lastSortBy   sortMode // track last sorted column for 3-state cycle
 
 	starting map[string]time.Time
 	removed  map[string]*models.ManagedService

@@ -194,19 +194,12 @@ func isRuntimeCommand(raw string) bool {
 	}
 }
 
-func sortModeLabel(s sortMode) string {
-	switch s {
-	case sortName:
-		return "name"
-	case sortProject:
-		return "project"
-	case sortPort:
-		return "port"
-	case sortHealth:
-		return "health"
-	default:
-		return "recent"
+func isProcessFinishedErr(err error) bool {
+	if err == nil {
+		return false
 	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "process already finished") || strings.Contains(msg, "no such process")
 }
 
 func (m topModel) isServiceRunning(name string) bool {
@@ -329,6 +322,18 @@ func (m *topModel) handleTableMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) 
 		return m, nil
 	}
 
+	// Check if click is on the header row (line 0 in running viewport)
+	if viewportY < m.table.lastRunningHeight {
+		absoluteLine := viewportY + m.table.runningYOffset()
+		if absoluteLine == 0 {
+			if col := m.columnAtX(mouse.X); col >= 0 {
+				m.cycleSort(col)
+				m.lastInput = time.Now()
+				return m, nil
+			}
+		}
+	}
+
 	runningDataStart := 2
 
 	const doubleClickThreshold = 500 * time.Millisecond
@@ -386,12 +391,4 @@ func (m *topModel) handleTableMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) 
 	}
 
 	return m, nil
-}
-
-func isProcessFinishedErr(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "process already finished") || strings.Contains(msg, "no such process")
 }

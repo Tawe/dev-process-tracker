@@ -187,3 +187,79 @@ func TestViewportStateTransitions(t *testing.T) {
 		t.Skip("TODO: Handle empty highlights - Edge case")
 	})
 }
+
+func TestSortCycling(t *testing.T) {
+	model := newTestModel()
+
+	t.Run("cycleSort ascending to reverse to recent", func(t *testing.T) {
+		// Start with recent (default)
+		assert.Equal(t, sortRecent, model.sortBy)
+		assert.False(t, model.sortReverse)
+
+		// Click name column -> ascending (yellow)
+		model.cycleSort(sortName)
+		assert.Equal(t, sortName, model.sortBy)
+		assert.False(t, model.sortReverse)
+
+		// Click same column again -> reverse (orange)
+		model.cycleSort(sortName)
+		assert.Equal(t, sortName, model.sortBy)
+		assert.True(t, model.sortReverse)
+
+		// Click same column again -> reset to recent
+		model.cycleSort(sortName)
+		assert.Equal(t, sortRecent, model.sortBy)
+		assert.False(t, model.sortReverse)
+	})
+
+	t.Run("clicking different column resets to ascending", func(t *testing.T) {
+		model.sortBy = sortName
+		model.sortReverse = true
+
+		// Click different column -> ascending
+		model.cycleSort(sortPort)
+		assert.Equal(t, sortPort, model.sortBy)
+		assert.False(t, model.sortReverse)
+	})
+
+	t.Run("s key cycles sort modes without reverse", func(t *testing.T) {
+		model.sortBy = sortRecent
+		model.sortReverse = false
+
+		// 's' key should cycle through modes and reset reverse
+		newModel, _ := model.Update(tea.KeyPressMsg{Code: 's'})
+		updated := newModel.(*topModel)
+		assert.Equal(t, sortName, updated.sortBy)
+		assert.False(t, updated.sortReverse)
+
+		newModel, _ = updated.Update(tea.KeyPressMsg{Code: 's'})
+		updated = newModel.(*topModel)
+		assert.Equal(t, sortProject, updated.sortBy)
+		assert.False(t, updated.sortReverse)
+	})
+}
+
+func TestColumnAtX(t *testing.T) {
+	model := newTestModel()
+	model.width = 120
+
+	tests := []struct {
+		name      string
+		x         int
+		wantSort  sortMode
+	}{
+		{"name column", 5, sortName},
+		{"port column", 18, sortPort},
+		{"pid column", 26, sortRecent},
+		{"project column", 40, sortProject},
+		{"health column", 115, sortHealth},
+		{"out of bounds", 200, sortMode(-1)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := model.columnAtX(tt.x)
+			assert.Equal(t, tt.wantSort, got)
+		})
+	}
+}

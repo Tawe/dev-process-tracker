@@ -223,7 +223,8 @@ func (m *topModel) renderRunningTable(width int) string {
 	visible := m.visibleServers()
 	displayNames := m.displayNames(visible)
 	headerStyle := lipgloss.NewStyle()
-	activeHeaderStyle := lipgloss.NewStyle().Bold(true)
+	yellowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true) // yellow for ascending
+	orangeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true) // orange for reverse
 
 	nameW, portW, pidW, projectW, healthW := 14, 6, 7, 14, 7
 	sep := 2
@@ -240,15 +241,32 @@ func (m *topModel) renderRunningTable(width int) string {
 	commandHeader := headerStyle.Render(fixedCell("Command", cmdW))
 	healthHeader := headerStyle.Render(fixedCell("Health", healthW))
 
+	// Apply color based on sort state
 	switch m.sortBy {
 	case sortName:
-		nameHeader = activeHeaderStyle.Render(fixedCell(fmt.Sprintf("Name (%d)", len(visible)), nameW))
+		if m.sortReverse {
+			nameHeader = orangeStyle.Render(fixedCell(fmt.Sprintf("Name (%d)", len(visible)), nameW))
+		} else {
+			nameHeader = yellowStyle.Render(fixedCell(fmt.Sprintf("Name (%d)", len(visible)), nameW))
+		}
 	case sortPort:
-		portHeader = activeHeaderStyle.Render(fixedCell("Port", portW))
+		if m.sortReverse {
+			portHeader = orangeStyle.Render(fixedCell("Port", portW))
+		} else {
+			portHeader = yellowStyle.Render(fixedCell("Port", portW))
+		}
 	case sortProject:
-		projectHeader = activeHeaderStyle.Render(fixedCell("Project", projectW))
+		if m.sortReverse {
+			projectHeader = orangeStyle.Render(fixedCell("Project", projectW))
+		} else {
+			projectHeader = yellowStyle.Render(fixedCell("Project", projectW))
+		}
 	case sortHealth:
-		healthHeader = activeHeaderStyle.Render(fixedCell("Health", healthW))
+		if m.sortReverse {
+			healthHeader = orangeStyle.Render(fixedCell("Health", healthW))
+		} else {
+			healthHeader = yellowStyle.Render(fixedCell("Health", healthW))
+		}
 	}
 
 	header := fmt.Sprintf("%s%s%s%s%s%s%s%s%s%s%s",
@@ -492,25 +510,4 @@ func (m topModel) displayNames(servers []*models.ServerInfo) []string {
 		}
 	}
 	return out
-}
-
-func (m topModel) sortServers(servers []*models.ServerInfo) {
-	switch m.sortBy {
-	case sortName:
-		sort.Slice(servers, func(i, j int) bool {
-			return strings.ToLower(m.serviceNameFor(servers[i])) < strings.ToLower(m.serviceNameFor(servers[j]))
-		})
-	case sortProject:
-		sort.Slice(servers, func(i, j int) bool {
-			return strings.ToLower(projectOf(servers[i])) < strings.ToLower(projectOf(servers[j]))
-		})
-	case sortPort:
-		sort.Slice(servers, func(i, j int) bool { return portOf(servers[i]) < portOf(servers[j]) })
-	case sortHealth:
-		sort.Slice(servers, func(i, j int) bool {
-			return strings.Compare(m.health[portOf(servers[i])], m.health[portOf(servers[j])]) < 0
-		})
-	default:
-		sort.Slice(servers, func(i, j int) bool { return pidOf(servers[i]) > pidOf(servers[j]) })
-	}
 }
