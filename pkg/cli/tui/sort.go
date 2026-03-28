@@ -115,6 +115,15 @@ func (m *topModel) columnAtX(x int) sortMode {
 	}
 }
 
+// toggleSortDirection flips the sort direction between ascending and descending.
+// No effect when in "Recent" mode (natural order only).
+func (m *topModel) toggleSortDirection() {
+	if m.sortBy == sortRecent {
+		return
+	}
+	m.sortReverse = !m.sortReverse
+}
+
 // cycleSort implements 3-state sort cycling: ascending (yellow) → reverse (orange) → reset to recent
 func (m *topModel) cycleSort(col sortMode) {
 	// If clicking the same column that's currently sorted

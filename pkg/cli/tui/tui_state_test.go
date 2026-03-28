@@ -2,6 +2,7 @@ package tui
 
 import (
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/devports/devpt/pkg/models"
@@ -236,6 +237,168 @@ func TestSortCycling(t *testing.T) {
 		updated = newModel.(*topModel)
 		assert.Equal(t, sortProject, updated.sortBy)
 		assert.False(t, updated.sortReverse)
+	})
+}
+
+func TestSortDirectionToggle(t *testing.T) {
+	model := newTestModel()
+
+	t.Run("toggle flips reverse without changing column", func(t *testing.T) {
+		model.sortBy = sortName
+		model.sortReverse = false
+
+		model.toggleSortDirection()
+		assert.Equal(t, sortName, model.sortBy)
+		assert.True(t, model.sortReverse)
+
+		model.toggleSortDirection()
+		assert.Equal(t, sortName, model.sortBy)
+		assert.False(t, model.sortReverse)
+	})
+
+	t.Run("toggle is no-op in recent mode", func(t *testing.T) {
+		model.sortBy = sortRecent
+		model.sortReverse = false
+
+		model.toggleSortDirection()
+		assert.Equal(t, sortRecent, model.sortBy)
+		assert.False(t, model.sortReverse)
+	})
+
+	t.Run("toggle preserves column across multiple flips", func(t *testing.T) {
+		model.sortBy = sortPort
+		model.sortReverse = false
+
+		model.toggleSortDirection()
+		model.toggleSortDirection()
+		model.toggleSortDirection()
+
+		assert.Equal(t, sortPort, model.sortBy)
+		assert.True(t, model.sortReverse)
+	})
+
+	t.Run("toggle works on every sortable column", func(t *testing.T) {
+		columns := []sortMode{sortName, sortProject, sortPort, sortHealth}
+		for _, col := range columns {
+			model.sortBy = col
+			model.sortReverse = false
+
+			model.toggleSortDirection()
+			assert.Equal(t, col, model.sortBy, "column changed after toggle for %s", sortModeLabel(col))
+			assert.True(t, model.sortReverse, "reverse not set for %s", sortModeLabel(col))
+		}
+	})
+}
+
+func TestSortDirectionToggleViaKey(t *testing.T) {
+	model := newTestModel()
+	model.mode = viewModeTable
+
+	t.Run("S key toggles direction for current column", func(t *testing.T) {
+		model.sortBy = sortName
+		model.sortReverse = false
+
+		newModel, _ := model.Update(tea.KeyPressMsg{Text: "S", Code: 'S'})
+		updated := newModel.(*topModel)
+		assert.Equal(t, sortName, updated.sortBy)
+		assert.True(t, updated.sortReverse)
+	})
+
+	t.Run("S key preserves column", func(t *testing.T) {
+		model.sortBy = sortProject
+		model.sortReverse = false
+
+		newModel, _ := model.Update(tea.KeyPressMsg{Text: "S", Code: 'S'})
+		updated := newModel.(*topModel)
+		assert.Equal(t, sortProject, updated.sortBy)
+		assert.True(t, updated.sortReverse)
+	})
+
+	t.Run("S key is no-op in recent mode", func(t *testing.T) {
+		model.sortBy = sortRecent
+		model.sortReverse = false
+
+		newModel, _ := model.Update(tea.KeyPressMsg{Text: "S", Code: 'S'})
+		updated := newModel.(*topModel)
+		assert.Equal(t, sortRecent, updated.sortBy)
+		assert.False(t, updated.sortReverse)
+	})
+
+	t.Run("S and s are independent operations", func(t *testing.T) {
+		model.sortBy = sortRecent
+		model.sortReverse = false
+
+		// s -> Name ascending
+		newModel, _ := model.Update(tea.KeyPressMsg{Text: "s", Code: 's'})
+		updated := newModel.(*topModel)
+		assert.Equal(t, sortName, updated.sortBy)
+		assert.False(t, updated.sortReverse)
+
+		// S -> Name descending
+		newModel, _ = updated.Update(tea.KeyPressMsg{Text: "S", Code: 'S'})
+		updated = newModel.(*topModel)
+		assert.Equal(t, sortName, updated.sortBy)
+		assert.True(t, updated.sortReverse)
+
+		// s -> Project ascending (column switch resets reverse)
+		newModel, _ = updated.Update(tea.KeyPressMsg{Text: "s", Code: 's'})
+		updated = newModel.(*topModel)
+		assert.Equal(t, sortProject, updated.sortBy)
+		assert.False(t, updated.sortReverse)
+	})
+}
+
+func TestSortColumnSwitchResetsDirection(t *testing.T) {
+	model := newTestModel()
+	model.mode = viewModeTable
+
+	t.Run("s key resets reverse when switching columns", func(t *testing.T) {
+		model.sortBy = sortName
+		model.sortReverse = true
+
+		newModel, _ := model.Update(tea.KeyPressMsg{Text: "s", Code: 's'})
+		updated := newModel.(*topModel)
+		assert.Equal(t, sortProject, updated.sortBy)
+		assert.False(t, updated.sortReverse)
+	})
+
+	t.Run("s key wraps around to recent and resets reverse", func(t *testing.T) {
+		model.sortBy = sortHealth
+		model.sortReverse = true
+
+		newModel, _ := model.Update(tea.KeyPressMsg{Text: "s", Code: 's'})
+		updated := newModel.(*topModel)
+		assert.Equal(t, sortRecent, updated.sortBy)
+		assert.False(t, updated.sortReverse)
+	})
+}
+
+func TestSortPersistenceAcrossRefresh(t *testing.T) {
+	model := newTestModel()
+	model.width = 100
+	model.height = 40
+	model.mode = viewModeTable
+
+	t.Run("sort state survives tick refresh", func(t *testing.T) {
+		model.sortBy = sortName
+		model.sortReverse = true
+
+		newModel, _ := model.Update(tickMsg(time.Now()))
+		updated := newModel.(*topModel)
+		assert.Equal(t, sortName, updated.sortBy)
+		assert.True(t, updated.sortReverse)
+	})
+
+	t.Run("sort state survives multiple refreshes", func(t *testing.T) {
+		model.sortBy = sortPort
+		model.sortReverse = true
+
+		for i := 0; i < 5; i++ {
+			newModel, _ := model.Update(tickMsg(time.Now()))
+			model = newModel.(*topModel)
+		}
+		assert.Equal(t, sortPort, model.sortBy)
+		assert.True(t, model.sortReverse)
 	})
 }
 

@@ -143,6 +143,9 @@ func (m *topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sortBy = (m.sortBy + 1) % sortModeCount
 			m.sortReverse = false
 			return m, nil
+		case key.Matches(msg, m.keys.SortReverse):
+			m.toggleSortDirection()
+			return m, nil
 		case key.Matches(msg, m.keys.Health):
 			m.showHealthDetail = !m.showHealthDetail
 			return m, nil
