@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+
+- Added table sorting controls with mouse support and reverse sort in the TUI
+
 ## 0.2.0
 
 - Added multi-service `start`, `stop`, and `restart` commands with quoted glob pattern support so multiple managed services can be controlled in one invocation
