@@ -139,35 +139,13 @@ func (a *App) StopCmd(identifier string) error {
 	targetServiceName := ""
 
 	// Check if identifier is a service name
-	if svc := a.registry.GetService(identifier); svc != nil {
+	if svc, _ := LookupServiceWithFallback(identifier, a.registry.ListServices()); svc != nil {
 		targetServiceName = svc.Name
-		if svc.LastPID != nil {
-			targetPID = *svc.LastPID
-		} else {
-			servers, err := a.discoverServers()
-			if err != nil {
-				return err
-			}
-			for _, srv := range servers {
-				if srv.ManagedService != nil && srv.ManagedService.Name == identifier && srv.ProcessRecord != nil {
-					targetPID = srv.ProcessRecord.PID
-					break
-				}
-			}
-			if targetPID == 0 && len(svc.Ports) > 0 {
-				for _, port := range svc.Ports {
-					for _, srv := range servers {
-						if srv.ProcessRecord != nil && srv.ProcessRecord.Port == port {
-							targetPID = srv.ProcessRecord.PID
-							break
-						}
-					}
-					if targetPID != 0 {
-						break
-					}
-				}
-			}
+		pid, err := a.validatedManagedPID(svc)
+		if err != nil {
+			return err
 		}
+		targetPID = pid
 	} else {
 		// Try parsing as port number
 		port, err := strconv.Atoi(identifier)
@@ -236,9 +214,11 @@ func (a *App) RestartCmd(name string) error {
 	}
 
 	// Stop if running
-	if svc.LastPID != nil && *svc.LastPID > 0 {
+	if pid, err := a.validatedManagedPID(svc); err != nil {
+		return err
+	} else if pid > 0 {
 		fmt.Fprintf(a.outWriter(), "Stopping service %q...\n", svc.Name)
-		if err := a.processManager.Stop(*svc.LastPID, 5000000000); err != nil { // 5 second timeout
+		if err := a.processManager.Stop(pid, 5000000000); err != nil { // 5 second timeout
 			fmt.Fprintf(a.errWriter(), "Warning: failed to stop service: %v\n", err)
 		}
 	}
@@ -293,8 +273,17 @@ func (a *App) BatchStartCmd(names []string) error {
 		}
 
 		// Check if already running
-		if svc.LastPID != nil && *svc.LastPID > 0 && a.processManager.IsRunning(*svc.LastPID) {
-			fmt.Fprintf(os.Stderr, "Warning: service %q already running (PID %d)\n", name, *svc.LastPID)
+		runningPID, err := a.validatedManagedPID(svc)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			anyFailure = true
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if runningPID > 0 {
+			fmt.Fprintf(os.Stderr, "Warning: service %q already running (PID %d)\n", name, runningPID)
 			continue
 		}
 
@@ -311,7 +300,7 @@ func (a *App) BatchStartCmd(names []string) error {
 		}
 
 		// Update registry with new PID
-		if updateErr := a.registry.UpdateServicePID(name, pid); updateErr != nil {
+		if updateErr := a.registry.UpdateServicePID(svc.Name, pid); updateErr != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to update registry for %q: %v\n", name, updateErr)
 		}
 
@@ -358,21 +347,17 @@ func (a *App) BatchStopCmd(names []string) error {
 		}
 
 		// Determine PID to stop
-		var targetPID int
-		if svc.LastPID != nil && *svc.LastPID > 0 {
-			targetPID = *svc.LastPID
-		} else {
-			// Service not running
-			fmt.Fprintf(os.Stderr, "Warning: service %q is not running\n", name)
+		targetPID, err := a.validatedManagedPID(svc)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			anyFailure = true
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
-
-		// Verify process is actually running
-		if !a.processManager.IsRunning(targetPID) {
-			fmt.Fprintf(os.Stderr, "Warning: service %q is not running (stale PID)\n", name)
-			if clrErr := a.registry.ClearServicePID(name); clrErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to clear PID for %q: %v\n", name, clrErr)
-			}
+		if targetPID == 0 {
+			fmt.Fprintf(os.Stderr, "Warning: service %q is not running\n", name)
 			continue
 		}
 
@@ -383,7 +368,7 @@ func (a *App) BatchStopCmd(names []string) error {
 				fmt.Fprintf(os.Stderr, "Error: requires sudo to terminate service %q (PID %d)\n", name, targetPID)
 			} else if isProcessFinishedErr(err) {
 				// Process already finished - clear PID and continue
-				if clrErr := a.registry.ClearServicePID(name); clrErr != nil {
+				if clrErr := a.registry.ClearServicePID(svc.Name); clrErr != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to clear PID for %q: %v\n", name, clrErr)
 				}
 				fmt.Printf("Service %q already stopped\n", name)
@@ -399,7 +384,7 @@ func (a *App) BatchStopCmd(names []string) error {
 		}
 
 		fmt.Printf("Service %q stopped (PID %d)\n", name, targetPID)
-		if clrErr := a.registry.ClearServicePID(name); clrErr != nil {
+		if clrErr := a.registry.ClearServicePID(svc.Name); clrErr != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to clear PID for %q: %v\n", name, clrErr)
 		}
 	}
@@ -444,13 +429,20 @@ func (a *App) BatchRestartCmd(names []string) error {
 		}
 
 		// Stop if running
-		if svc.LastPID != nil && *svc.LastPID > 0 {
-			if a.processManager.IsRunning(*svc.LastPID) {
-				fmt.Printf("Stopping service %q (PID %d)...\n", name, *svc.LastPID)
-				if stopErr := a.processManager.Stop(*svc.LastPID, 5000000000); stopErr != nil {
-					if !errors.Is(stopErr, process.ErrNeedSudo) && !isProcessFinishedErr(stopErr) {
-						fmt.Fprintf(os.Stderr, "Warning: failed to stop service %q: %v\n", name, stopErr)
-					}
+		runningPID, err := a.validatedManagedPID(svc)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			anyFailure = true
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if runningPID > 0 {
+			fmt.Printf("Stopping service %q (PID %d)...\n", name, runningPID)
+			if stopErr := a.processManager.Stop(runningPID, 5000000000); stopErr != nil {
+				if !errors.Is(stopErr, process.ErrNeedSudo) && !isProcessFinishedErr(stopErr) {
+					fmt.Fprintf(os.Stderr, "Warning: failed to stop service %q: %v\n", name, stopErr)
 				}
 			}
 		}
@@ -468,7 +460,7 @@ func (a *App) BatchRestartCmd(names []string) error {
 		}
 
 		// Update registry with new PID
-		if updateErr := a.registry.UpdateServicePID(name, pid); updateErr != nil {
+		if updateErr := a.registry.UpdateServicePID(svc.Name, pid); updateErr != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to update registry for %q: %v\n", name, updateErr)
 		}
 
@@ -509,6 +501,49 @@ func isProcessFinishedErr(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "process already finished") || strings.Contains(msg, "no such process")
+}
+
+func managedServicePID(servers []*models.ServerInfo, serviceName string) int {
+	for _, srv := range servers {
+		if srv == nil || srv.ManagedService == nil || srv.ProcessRecord == nil {
+			continue
+		}
+		if srv.ManagedService.Name == serviceName {
+			return srv.ProcessRecord.PID
+		}
+	}
+	return 0
+}
+
+func validatedManagedPIDFromServers(
+	svc *models.ManagedService,
+	servers []*models.ServerInfo,
+	isRunning func(int) bool,
+) (int, error) {
+	if svc == nil {
+		return 0, nil
+	}
+
+	if pid := managedServicePID(servers, svc.Name); pid != 0 {
+		return pid, nil
+	}
+
+	if svc.LastPID != nil && *svc.LastPID > 0 && isRunning != nil && isRunning(*svc.LastPID) {
+		return 0, fmt.Errorf(
+			"cannot safely determine PID for service %q; stored PID is no longer validated against a live managed process",
+			svc.Name,
+		)
+	}
+
+	return 0, nil
+}
+
+func (a *App) validatedManagedPID(svc *models.ManagedService) (int, error) {
+	servers, err := a.discoverServers()
+	if err != nil {
+		return 0, err
+	}
+	return validatedManagedPIDFromServers(svc, servers, a.processManager.IsRunning)
 }
 
 // BatchResult represents the result of a single service operation

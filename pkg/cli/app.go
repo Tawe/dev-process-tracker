@@ -93,20 +93,8 @@ func (a *App) discoverServers() ([]*models.ServerInfo, error) {
 		return nil, fmt.Errorf("failed to scan processes: %w", err)
 	}
 
-	// Get managed services and their PIDs before filtering
-	// This ensures processes belonging to managed services are never filtered out
 	managedServices := a.registry.ListServices()
-	managedPIDs := make(map[int]bool)
-	for _, svc := range managedServices {
-		if svc.LastPID != nil && *svc.LastPID > 0 {
-			managedPIDs[*svc.LastPID] = true
-		}
-	}
-
-	// Filter to keep only development processes (or managed service processes)
 	commandMap := a.getCommandMap(processes)
-	processes = scanner.FilterDevProcesses(processes, commandMap, managedPIDs)
-
 	for _, proc := range processes {
 		if proc.CWD != "" {
 			proc.ProjectRoot = a.resolver.FindProjectRoot(proc.CWD)
@@ -116,28 +104,25 @@ func (a *App) discoverServers() ([]*models.ServerInfo, error) {
 
 	var servers []*models.ServerInfo
 
-	for _, proc := range processes {
-		source := models.SourceManual
-		if proc.AgentTag != nil {
-			source = proc.AgentTag.Source
-		}
-
-		servers = append(servers, &models.ServerInfo{
-			ProcessRecord: proc,
-			Source:        source,
-			Status:        "running",
-		})
+	type managedIdentity struct {
+		cwd  string
+		root string
 	}
 
 	portOwners := make(map[int][]*models.ManagedService)
 	rootOwners := make(map[string]int)
 	cwdOwners := make(map[string]int)
+	identities := make(map[*models.ManagedService]managedIdentity, len(managedServices))
 	for _, svc := range managedServices {
 		svcCWD := normalizePath(svc.CWD)
+		svcRoot := normalizePath(a.resolver.FindProjectRoot(svc.CWD))
+		identities[svc] = managedIdentity{
+			cwd:  svcCWD,
+			root: svcRoot,
+		}
 		if svcCWD != "" {
 			cwdOwners[svcCWD]++
 		}
-		svcRoot := normalizePath(a.resolver.FindProjectRoot(svc.CWD))
 		if svcRoot != "" {
 			rootOwners[svcRoot]++
 		}
@@ -145,96 +130,59 @@ func (a *App) discoverServers() ([]*models.ServerInfo, error) {
 			portOwners[port] = append(portOwners[port], svc)
 		}
 	}
+
+	matchedServices := make(map[*models.ManagedService]*models.ProcessRecord, len(managedServices))
+	matchedProcesses := make(map[*models.ProcessRecord]*models.ManagedService, len(managedServices))
 	for _, svc := range managedServices {
-		found := false
-		svcCWD := normalizePath(svc.CWD)
-		svcRoot := normalizePath(a.resolver.FindProjectRoot(svc.CWD))
+		identity := identities[svc]
+		if proc := findManagedProcessForService(svc, processes, identity.root, identity.cwd, rootOwners, cwdOwners, portOwners); proc != nil {
+			matchedServices[svc] = proc
+			matchedProcesses[proc] = svc
+		}
+	}
 
-		// Prefer PID, then project root/CWD, then port (only if unique).
+	for _, proc := range processes {
+		if proc == nil {
+			continue
+		}
+
+		matchedSvc := matchedProcesses[proc]
+		if matchedSvc == nil && !scanner.IsDevProcess(proc, commandMap[proc.PID]) {
+			continue
+		}
+
+		source := models.SourceManual
+		if proc.AgentTag != nil {
+			source = proc.AgentTag.Source
+		}
+
+		servers = append(servers, &models.ServerInfo{
+			ManagedService: matchedSvc,
+			ProcessRecord:  proc,
+			Source:         source,
+			Status:         "running",
+		})
+	}
+
+	for _, svc := range managedServices {
+		if matchedServices[svc] != nil {
+			continue
+		}
+
+		status := "stopped"
+		crashReason := ""
+		crashLogTail := []string(nil)
 		if svc.LastPID != nil && *svc.LastPID > 0 {
-			for _, server := range servers {
-				if server.ProcessRecord != nil && server.ProcessRecord.PID == *svc.LastPID {
-					server.ManagedService = svc
-					found = true
-					break
-				}
-			}
+			status = "crashed"
+			crashReason, crashLogTail = a.getCrashReport(svc.Name, 12)
 		}
-
-		if !found {
-			for _, server := range servers {
-				if server.ProcessRecord == nil || server.ManagedService != nil {
-					continue
-				}
-				procCWD := normalizePath(server.ProcessRecord.CWD)
-				procRoot := normalizePath(server.ProcessRecord.ProjectRoot)
-				if canMatchByPath(svcRoot, svcCWD, procRoot, procCWD, rootOwners, cwdOwners) {
-					server.ManagedService = svc
-					found = true
-					break
-				}
-			}
-		}
-
-		if !found && len(svc.Ports) > 0 {
-			for _, port := range svc.Ports {
-				if owners := portOwners[port]; len(owners) != 1 {
-					continue
-				}
-				for _, server := range servers {
-					if server.ProcessRecord != nil && server.ProcessRecord.Port == port && server.ManagedService == nil {
-						procCWD := normalizePath(server.ProcessRecord.CWD)
-						procRoot := normalizePath(server.ProcessRecord.ProjectRoot)
-						if svcRoot != "" && procRoot != "" && svcRoot != procRoot {
-							continue
-						}
-						if svcCWD != "" && procCWD != "" && svcCWD != procCWD {
-							continue
-						}
-						server.ManagedService = svc
-						found = true
-						break
-					}
-				}
-				if found {
-					break
-				}
-			}
-		}
-
-		if !found && svc.LastPID != nil && *svc.LastPID > 0 && a.processManager.IsRunning(*svc.LastPID) {
-			servers = append(servers, &models.ServerInfo{
-				ManagedService: svc,
-				ProcessRecord: &models.ProcessRecord{
-					PID:         *svc.LastPID,
-					Command:     svc.Command,
-					CWD:         svc.CWD,
-					ProjectRoot: svcRoot,
-					Port:        0,
-					Protocol:    "tcp",
-				},
-				Source: models.SourceManaged,
-				Status: "running",
-			})
-			found = true
-		}
-
-		if !found {
-			status := "stopped"
-			crashReason := ""
-			crashLogTail := []string(nil)
-			if svc.LastPID != nil && *svc.LastPID > 0 {
-				status = "crashed"
-				crashReason, crashLogTail = a.getCrashReport(svc.Name, 12)
-			}
-			servers = append(servers, &models.ServerInfo{
-				ManagedService: svc,
-				Source:         models.SourceManaged,
-				Status:         status,
-				CrashReason:    crashReason,
-				CrashLogTail:   crashLogTail,
-			})
-		}
+		servers = append(servers, &models.ServerInfo{
+			ManagedService: svc,
+			Source:         models.SourceManaged,
+			Status:         status,
+			CrashReason:    crashReason,
+			CrashLogTail:   crashLogTail,
+		})
 	}
 
 	return servers, nil
@@ -315,6 +263,86 @@ func canMatchByPath(svcRoot, svcCWD, procRoot, procCWD string, rootOwners, cwdOw
 	}
 	if svcCWD != "" && procCWD != "" && svcCWD == procCWD && cwdOwners[svcCWD] == 1 {
 		return true
+	}
+	return false
+}
+
+func findManagedProcessForService(
+	svc *models.ManagedService,
+	processes []*models.ProcessRecord,
+	svcRoot string,
+	svcCWD string,
+	rootOwners map[string]int,
+	cwdOwners map[string]int,
+	portOwners map[int][]*models.ManagedService,
+) *models.ProcessRecord {
+	if svc == nil {
+		return nil
+	}
+
+	for _, proc := range processes {
+		if proc == nil {
+			continue
+		}
+		procCWD := normalizePath(proc.CWD)
+		procRoot := normalizePath(proc.ProjectRoot)
+		if canMatchByPath(svcRoot, svcCWD, procRoot, procCWD, rootOwners, cwdOwners) {
+			return proc
+		}
+	}
+
+	for _, port := range svc.Ports {
+		if owners := portOwners[port]; len(owners) != 1 {
+			continue
+		}
+		for _, proc := range processes {
+			if proc == nil || proc.Port != port {
+				continue
+			}
+			procCWD := normalizePath(proc.CWD)
+			procRoot := normalizePath(proc.ProjectRoot)
+			if svcRoot != "" && procRoot != "" && svcRoot != procRoot {
+				continue
+			}
+			if svcCWD != "" && procCWD != "" && svcCWD != procCWD {
+				continue
+			}
+			return proc
+		}
+	}
+
+	if svc.LastPID != nil && *svc.LastPID > 0 {
+		for _, proc := range processes {
+			if proc == nil || proc.PID != *svc.LastPID {
+				continue
+			}
+			procCWD := normalizePath(proc.CWD)
+			procRoot := normalizePath(proc.ProjectRoot)
+			if serviceMatchesProcess(svc, proc, svcRoot, procRoot, procCWD) {
+				return proc
+			}
+		}
+	}
+
+	return nil
+}
+
+func serviceMatchesProcess(svc *models.ManagedService, proc *models.ProcessRecord, svcRoot, procRoot, procCWD string) bool {
+	if svc == nil || proc == nil {
+		return false
+	}
+
+	svcCWD := normalizePath(svc.CWD)
+	if svcCWD != "" && procCWD != "" && svcCWD == procCWD {
+		return true
+	}
+	if svcRoot != "" && procRoot != "" && svcRoot == procRoot {
+		return true
+	}
+	for _, port := range svc.Ports {
+		if port > 0 && proc.Port == port {
+			return true
+		}
 	}
 	return false
 }

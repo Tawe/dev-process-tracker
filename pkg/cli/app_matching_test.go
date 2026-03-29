@@ -1,23 +1,184 @@
 package cli
 
-import "testing"
+import (
+	"testing"
 
-func TestCanMatchByPath(t *testing.T) {
-	t.Run("matches unique shared root", func(t *testing.T) {
-		if !canMatchByPath("/repo", "/repo", "/repo", "/repo", map[string]int{"/repo": 1}, map[string]int{"/repo": 1}) {
-			t.Fatal("expected unique root/cwd match to be allowed")
-		}
-	})
+	"github.com/devports/devpt/pkg/models"
+)
 
-	t.Run("rejects ambiguous shared root", func(t *testing.T) {
-		if canMatchByPath("/repo", "/repo", "/repo", "/repo", map[string]int{"/repo": 2}, map[string]int{"/repo": 2}) {
-			t.Fatal("expected ambiguous shared root/cwd match to be rejected")
-		}
-	})
+func TestCanMatchByPathRequiresUniqueOwner(t *testing.T) {
+	t.Parallel()
 
-	t.Run("rejects ambiguous root even when process matches", func(t *testing.T) {
-		if canMatchByPath("/repo", "/repo", "/repo", "/other", map[string]int{"/repo": 2}, map[string]int{"/repo": 1}) {
-			t.Fatal("expected ambiguous root match to be rejected")
-		}
+	if !canMatchByPath(
+		"/workspace/app",
+		"/workspace/app",
+		"/workspace/app",
+		"/workspace/app",
+		map[string]int{"/workspace/app": 1},
+		map[string]int{"/workspace/app": 1},
+	) {
+		t.Fatal("expected unique path ownership to match")
+	}
+
+	if canMatchByPath(
+		"/workspace/app",
+		"/workspace/app",
+		"/workspace/app",
+		"/workspace/app",
+		map[string]int{"/workspace/app": 2},
+		map[string]int{"/workspace/app": 2},
+	) {
+		t.Fatal("expected ambiguous path ownership to be rejected")
+	}
+}
+
+func TestServiceMatchesProcessRequiresStrongerSignalThanPID(t *testing.T) {
+	t.Parallel()
+
+	svc := &models.ManagedService{
+		Name:  "api",
+		CWD:   "/workspace/api",
+		Ports: []int{3000},
+	}
+
+	if !serviceMatchesProcess(
+		svc,
+		&models.ProcessRecord{PID: 1234, Port: 3000},
+		"/workspace/api",
+		"",
+		"",
+	) {
+		t.Fatal("expected declared port to validate the process")
+	}
+
+	if !serviceMatchesProcess(
+		svc,
+		&models.ProcessRecord{PID: 1234, Port: 9999, CWD: "/workspace/api"},
+		"/workspace/api",
+		"/workspace/api",
+		"/workspace/api",
+	) {
+		t.Fatal("expected matching cwd/project root to validate the process")
+	}
+
+	if serviceMatchesProcess(
+		svc,
+		&models.ProcessRecord{PID: 1234, Port: 9999, CWD: "/tmp/other"},
+		"/workspace/api",
+		"/tmp/other",
+		"/tmp/other",
+	) {
+		t.Fatal("expected PID-only match without path/port agreement to be rejected")
+	}
+}
+
+func TestFindManagedProcessForServiceKeepsManagedNonDevProcess(t *testing.T) {
+	t.Parallel()
+
+	lastPID := 1234
+	svc := &models.ManagedService{
+		Name:    "postgres",
+		CWD:     "/workspace/db",
+		Ports:   []int{5432},
+		LastPID: &lastPID,
+	}
+	processes := []*models.ProcessRecord{
+		{
+			PID:         1234,
+			Port:        5432,
+			Command:     "/usr/local/bin/postgres",
+			CWD:         "/workspace/db",
+			ProjectRoot: "/workspace/db",
+		},
+	}
+
+	got := findManagedProcessForService(
+		svc,
+		processes,
+		"/workspace/db",
+		"/workspace/db",
+		map[string]int{"/workspace/db": 1},
+		map[string]int{"/workspace/db": 1},
+		map[int][]*models.ManagedService{5432: []*models.ManagedService{svc}},
+	)
+	if got != processes[0] {
+		t.Fatalf("expected managed process match, got %#v", got)
+	}
+}
+
+func TestFindManagedProcessForServiceRejectsPIDOnlyMatch(t *testing.T) {
+	t.Parallel()
+
+	lastPID := 4242
+	svc := &models.ManagedService{
+		Name:    "api",
+		CWD:     "/workspace/api",
+		Ports:   []int{3000},
+		LastPID: &lastPID,
+	}
+	processes := []*models.ProcessRecord{
+		{
+			PID:         4242,
+			Port:        9999,
+			Command:     "/usr/sbin/unrelated",
+			CWD:         "/tmp/other",
+			ProjectRoot: "/tmp/other",
+		},
+	}
+
+	got := findManagedProcessForService(
+		svc,
+		processes,
+		"/workspace/api",
+		"/workspace/api",
+		map[string]int{"/workspace/api": 1, "/tmp/other": 1},
+		map[string]int{"/workspace/api": 1, "/tmp/other": 1},
+		map[int][]*models.ManagedService{3000: []*models.ManagedService{svc}},
+	)
+	if got != nil {
+		t.Fatalf("expected PID-only candidate to be rejected, got %#v", got)
+	}
+}
+
+func TestManagedServicePIDReturnsMatchedProcess(t *testing.T) {
+	t.Parallel()
+
+	servers := []*models.ServerInfo{
+		{
+			ProcessRecord: &models.ProcessRecord{PID: 2001},
+			ManagedService: &models.ManagedService{
+				Name: "api",
+			},
+		},
+		{
+			ProcessRecord: &models.ProcessRecord{PID: 2002},
+			ManagedService: &models.ManagedService{
+				Name: "worker",
+			},
+		},
+	}
+
+	if got := managedServicePID(servers, "worker"); got != 2002 {
+		t.Fatalf("managedServicePID(..., worker) = %d, want 2002", got)
+	}
+	if got := managedServicePID(servers, "missing"); got != 0 {
+		t.Fatalf("managedServicePID(..., missing) = %d, want 0", got)
+	}
+}
+
+func TestValidatedManagedPIDFromServersRejectsUnvalidatedStoredPID(t *testing.T) {
+	t.Parallel()
+
+	lastPID := 9090
+	svc := &models.ManagedService{
+		Name:    "api",
+		LastPID: &lastPID,
+	}
+
+	_, err := validatedManagedPIDFromServers(svc, nil, func(pid int) bool {
+		return pid == lastPID
 	})
+	if err == nil {
+		t.Fatal("expected stale running stored PID to be rejected")
+	}
 }

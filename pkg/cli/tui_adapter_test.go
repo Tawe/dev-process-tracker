@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
+	"net"
 	"path/filepath"
 	"testing"
 	"time"
@@ -9,6 +11,7 @@ import (
 	"github.com/devports/devpt/pkg/models"
 	"github.com/devports/devpt/pkg/process"
 	"github.com/devports/devpt/pkg/registry"
+	"github.com/devports/devpt/pkg/scanner"
 )
 
 func TestTUIAdapterRestartCmd_SuppressesCLIProgressOutput(t *testing.T) {
@@ -21,10 +24,12 @@ func TestTUIAdapterRestartCmd_SuppressesCLIProgressOutput(t *testing.T) {
 	}
 
 	now := time.Now()
+	port := reserveTestPort(t)
 	if err := reg.AddService(&models.ManagedService{
 		Name:      "worker",
 		CWD:       tmp,
-		Command:   "/bin/sleep 5",
+		Command:   fmt.Sprintf("/usr/bin/python3 -m http.server %d --bind 127.0.0.1", port),
+		Ports:     []int{port},
 		CreatedAt: now,
 		UpdatedAt: now,
 	}); err != nil {
@@ -35,6 +40,9 @@ func TestTUIAdapterRestartCmd_SuppressesCLIProgressOutput(t *testing.T) {
 	var stderr bytes.Buffer
 	app := &App{
 		registry:       reg,
+		scanner:        scanner.NewProcessScanner(),
+		resolver:       scanner.NewProjectResolver(),
+		detector:       scanner.NewAgentDetector(),
 		processManager: process.NewManager(filepath.Join(tmp, "logs")),
 		stdout:         &stdout,
 		stderr:         &stderr,
@@ -43,6 +51,7 @@ func TestTUIAdapterRestartCmd_SuppressesCLIProgressOutput(t *testing.T) {
 	if err := app.StartCmd("worker"); err != nil {
 		t.Fatalf("start service: %v", err)
 	}
+	waitForTCPListener(t, port)
 
 	svc := reg.GetService("worker")
 	if svc == nil || svc.LastPID == nil || *svc.LastPID <= 0 {
@@ -80,4 +89,37 @@ func TestTUIAdapterRestartCmd_SuppressesCLIProgressOutput(t *testing.T) {
 	if err := app.processManager.Stop(*svc.LastPID, 2*time.Second); err != nil && err != process.ErrNeedSudo {
 		t.Fatalf("cleanup stop: %v", err)
 	}
+}
+
+func reserveTestPort(t *testing.T) int {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve port: %v", err)
+	}
+	defer ln.Close()
+
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("unexpected listener address type: %T", ln.Addr())
+	}
+	return addr.Port
+}
+
+func waitForTCPListener(t *testing.T, port int) {
+	t.Helper()
+
+	deadline := time.Now().Add(3 * time.Second)
+	address := fmt.Sprintf("127.0.0.1:%d", port)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", address, 100*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	t.Fatalf("listener on %s did not become ready", address)
 }
