@@ -1,6 +1,6 @@
 # DevPortTrack Debug Protocol
 
-> Runtime coverage index: 1 runtime (devpt-cli)
+> Runtime coverage index: 2 runtimes (devpt-cli, sandbox fixtures)
 
 ---
 
@@ -51,18 +51,22 @@
 ### devpt-cli / ROLLOUT / VERIFIED
 
 - Action: Build and verify version output
-- Signal: `devpt version 0.1.0`
+- Signal: `devpt version 0.2.2` (via `./devpt --version`)
 - Constraints: No hot reload; requires full rebuild
 - See: `.github/copilot-instructions.md` → Quick Reference for build commands
 
 ### devpt-cli / TEST / VERIFIED
 
 - Action: Run test suite
-- Signal: `ok` for each package; overall coverage ~38.9%
-- Constraints: Tests in `pkg/cli/*_test.go` and `pkg/process/*_test.go`
+- Signal: `ok` for each package; coverage 39.3% (cli), 59.1% (tui)
+- Constraints: Tests in `pkg/cli/*_test.go`, `pkg/cli/tui/*_test.go`, `pkg/process/*_test.go`
   - `tui_state_test.go`: Model state transitions (5 tests)
   - `tui_ui_test.go`: UI rendering verification (23 tests, 51 subtests)
-  - `commands_test.go`: Command validation and warnings (3 tests)
+  - `tui_key_input_test.go`: Key input handling
+  - `tui_viewport_test.go`: Viewport scrolling tests
+  - `app_batch_test.go`: Batch operations
+  - `app_matching_test.go`: Pattern matching
+  - `command_validation_test.go`: Command validation
   - `manager_parse_test.go`: Process command parsing (2 tests)
 - See: `.github/copilot-instructions.md` → Testing section for commands
 
@@ -122,17 +126,17 @@
 
 ## Runtime: `sandbox/servers/*` (Test Fixtures)
 
-| Field      | Value                                              |
-|------------|----------------------------------------------------|
-| `id`       | go-basic, node-basic, node-crash, node-warnings    |
-| `class`    | test fixtures                                      |
-| `entry`    | `sandbox/servers/<name>/main.go` or `server.js`    |
-| `owner`    | devpt-cli (managed)                                |
-| `observe`  | `~/.config/devpt/logs/<name>/*.log`                |
-| `control`  | Via devpt-cli: `./devpt {start\|stop} <name>`      |
-| `inject`   | `go run .` (Go) or `node server.js` (Node)         |
-| `rollout`  | Rebuild + restart via devpt                        |
-| `test`     | No dedicated tests (fixtures for manual testing)   |
+| Field      | Value                                                                       |
+|------------|-----------------------------------------------------------------------------|
+| `id`       | go-basic, node-basic, node-crash, node-warnings, node-port-fallback, python-basic |
+| `class`    | test fixtures                                                               |
+| `entry`    | `sandbox/servers/<name>/main.go` or `server.js` or `dev.js`                 |
+| `owner`    | devpt-cli (managed)                                                         |
+| `observe`  | `~/.config/devpt/logs/<name>/*.log`                                         |
+| `control`  | Via devpt-cli: `./devpt {start\|stop} <name>`                               |
+| `inject`   | `go run .` (Go) or `node server.js` (Node)                                  |
+| `rollout`  | Rebuild + restart via devpt                                                 |
+| `test`     | No dedicated tests (fixtures for manual testing)                            |
 
 ### go-basic / OBSERVE / VERIFIED
 

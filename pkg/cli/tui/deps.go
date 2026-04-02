@@ -20,4 +20,5 @@ type AppDeps interface {
 	StopProcess(pid int, timeout time.Duration) error
 	TailServiceLogs(name string, lines int) ([]string, error)
 	TailProcessLogs(pid int, lines int) ([]string, error)
+	LatestServiceLogPath(name string) (string, error)
 }

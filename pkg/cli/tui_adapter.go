@@ -63,3 +63,7 @@ func (a tuiAdapter) TailServiceLogs(name string, lines int) ([]string, error) {
 func (a tuiAdapter) TailProcessLogs(pid int, lines int) ([]string, error) {
 	return a.app.processManager.TailProcess(pid, lines)
 }
+
+func (a tuiAdapter) LatestServiceLogPath(name string) (string, error) {
+	return a.app.processManager.LatestLogPath(name)
+}

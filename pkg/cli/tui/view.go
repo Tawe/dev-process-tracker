@@ -53,15 +53,6 @@ func (m *topModel) baseViewContent(width int) string {
 	}
 
 	switch m.mode {
-	case viewModeTable, viewModeCommand, viewModeSearch:
-		b.WriteString("\n")
-		if ctx := m.renderContext(width); ctx != "" {
-			b.WriteString(ctx)
-			b.WriteString("\n")
-		}
-	}
-
-	switch m.mode {
 	case viewModeLogs:
 		b.WriteString(m.renderLogs(width))
 		b.WriteString("\n")
@@ -69,6 +60,7 @@ func (m *topModel) baseViewContent(width int) string {
 		b.WriteString(m.renderLogsDebug(width))
 		b.WriteString("\n")
 	case viewModeTable, viewModeSearch:
+		b.WriteString("\n")
 		b.WriteString(m.table.Render(m, width))
 		b.WriteString("\n")
 	}

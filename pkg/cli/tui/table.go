@@ -67,11 +67,8 @@ func (t *processTable) Render(m *topModel, width int) string {
 }
 
 func (m *topModel) tableTopLines(width int) int {
-	lines := 1
-	if ctx := m.renderContext(width); ctx != "" {
-		lines += renderedLineCount(ctx)
-	}
-	return lines
+	// Header line + blank line before the table content.
+	return 2
 }
 
 func (m *topModel) tableBottomLines(width int) int {
@@ -86,33 +83,16 @@ func (m *topModel) hasStatusLine() bool {
 	if m.cmdStatus != "" {
 		return true
 	}
-	if m.focus == focusManaged {
-		managed := m.managedServices()
-		if m.managedSel >= 0 && m.managedSel < len(managed) {
-			if m.crashReasonForService(managed[m.managedSel].Name) != "" {
-				return true
-			}
-		}
-	}
+	// With split view, details pane shows service context - no need for status line
 	return false
-}
-
-func (m *topModel) renderContext(width int) string {
-	return ""
 }
 
 func (m *topModel) renderStatusLine(width int) string {
 	text := ""
 	if m.cmdStatus != "" {
 		text = m.cmdStatus
-	} else if m.focus == focusManaged {
-		managed := m.managedServices()
-		if m.managedSel >= 0 && m.managedSel < len(managed) {
-			if reason := m.crashReasonForService(managed[m.managedSel].Name); reason != "" {
-				text = fmt.Sprintf("Crash: %s", reason)
-			}
-		}
 	}
+	// With split view, the details pane shows service state - no duplication in status line
 	if text == "" {
 		return ""
 	}
@@ -223,7 +203,7 @@ func (m *topModel) renderRunningTable(width int) string {
 	visible := m.visibleServers()
 	displayNames := m.displayNames(visible)
 	headerStyle := lipgloss.NewStyle()
-	yellowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true) // yellow for ascending
+	yellowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)  // yellow for ascending
 	orangeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true) // orange for reverse
 
 	nameW, portW, pidW, projectW, healthW := 14, 6, 7, 14, 7
@@ -372,6 +352,25 @@ func (m *topModel) renderManagedSection(width int) string {
 		return fitLine(`No managed services yet. Use ^A then: add myapp /path/to/app "npm run dev" 3000`, width)
 	}
 
+	// Split width 50|50
+	listWidth := width / 2
+	detailsWidth := width - listWidth
+	if listWidth < 1 {
+		listWidth = 1
+	}
+	if detailsWidth < 1 {
+		detailsWidth = 1
+	}
+
+	listPane := m.renderManagedList(listWidth)
+	detailsPane := m.renderManagedDetails(detailsWidth)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, listPane, detailsPane)
+}
+
+func (m *topModel) renderManagedList(width int) string {
+	managed := m.managedServices()
+
 	portOwners := make(map[int]int)
 	for _, svc := range managed {
 		for _, p := range svc.Ports {
@@ -379,7 +378,7 @@ func (m *topModel) renderManagedSection(width int) string {
 		}
 	}
 
-	var b strings.Builder
+	var lines []string
 	for i, svc := range managed {
 		state := m.serviceStatus(svc.Name)
 		if state == "stopped" {
@@ -388,7 +387,10 @@ func (m *topModel) renderManagedSection(width int) string {
 			}
 		}
 
-		line := fmt.Sprintf("%s [%s]", svc.Name, state)
+		// Build plain text first, then apply styling
+		symbolChar := managedStatusSymbol(state)
+		symbolColor := managedStatusColor(state)
+		plainLine := fmt.Sprintf("%s %s [%s]", symbolChar, svc.Name, state)
 
 		conflicting := false
 		for _, p := range svc.Ports {
@@ -398,26 +400,74 @@ func (m *topModel) renderManagedSection(width int) string {
 			}
 		}
 		if conflicting {
-			line = fmt.Sprintf("%s (port conflict)", line)
+			plainLine = fmt.Sprintf("%s (port conflict)", plainLine)
 		} else if len(svc.Ports) > 1 {
-			line = fmt.Sprintf("%s (ports: %v)", line, svc.Ports)
+			plainLine = fmt.Sprintf("%s (ports: %v)", plainLine, svc.Ports)
 		}
 
-		line = fitLine(line, width)
+		var line string
 		if i == m.managedSel {
 			bg := "8"
 			if m.focus == focusManaged {
 				bg = "57"
 			}
-			line = lipgloss.NewStyle().Background(lipgloss.Color(bg)).Foreground(lipgloss.Color("15")).Render(line)
+			// Keep selected-row styling simple so the full line highlights consistently.
+			line = lipgloss.NewStyle().Background(lipgloss.Color(bg)).Foreground(lipgloss.Color("15")).Render(fitLine(plainLine, width))
+		} else {
+			// Non-selected: color just the state symbol.
+			symbolStyled := lipgloss.NewStyle().Foreground(lipgloss.Color(symbolColor)).Bold(true).Render(symbolChar)
+			line = strings.Replace(plainLine, symbolChar, symbolStyled, 1)
+			line = fitAnsiLine(line, width)
 		}
-		b.WriteString(line)
-		if i < len(managed)-1 {
-			b.WriteString("\n")
+		lines = append(lines, line)
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func (m *topModel) renderManagedDetails(width int) string {
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	header := headerStyle.Render("Selected service details")
+
+	managed := m.managedServices()
+	if m.managedSel < 0 || m.managedSel >= len(managed) {
+		placeholder := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("Select a managed service to inspect status")
+		return header + "\n" + fitLine(placeholder, width)
+	}
+
+	svc := managed[m.managedSel]
+	state := m.serviceStatus(svc.Name)
+	if state == "stopped" {
+		if _, ok := m.starting[svc.Name]; ok {
+			state = "starting"
 		}
 	}
 
-	return b.String()
+	symbol := lipgloss.NewStyle().Foreground(lipgloss.Color(managedStatusColor(state))).Bold(true).Render(managedStatusSymbol(state))
+
+	var lines []string
+	lines = append(lines, fitLine(header, width))
+	lines = append(lines, fitLine(fmt.Sprintf(" %s %s [%s]", symbol, svc.Name, state), width))
+
+	if srv := m.serverInfoForService(svc.Name); srv != nil && srv.Source != "" {
+		lines = append(lines, fitLine(fmt.Sprintf(" Source: %s", srv.Source), width))
+	}
+
+	if state == "crashed" {
+		if reason := m.crashReasonForService(svc.Name); reason != "" {
+			lines = append(lines, fitLine(fmt.Sprintf(" Headline: %s", reason), width))
+		}
+		if logPath, err := m.app.LatestServiceLogPath(svc.Name); err == nil && strings.TrimSpace(logPath) != "" {
+			lines = append(lines, fitLine(fmt.Sprintf(" Log: %s", logPath), width))
+		}
+		if srv := m.serverInfoForService(svc.Name); srv != nil {
+			for _, logLine := range nonEmptyTail(srv.CrashLogTail, 3) {
+				lines = append(lines, fitLine(" "+strings.TrimSpace(logLine), width))
+			}
+		}
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 func (t *processTable) updateFocusedViewport(focus viewFocus, msg tea.Msg) tea.Cmd {

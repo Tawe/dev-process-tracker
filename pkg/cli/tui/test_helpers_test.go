@@ -10,6 +10,7 @@ import (
 type fakeAppDeps struct {
 	servers  []*models.ServerInfo
 	services []*models.ManagedService
+	logPaths map[string]string
 }
 
 func newTestModel() *topModel {
@@ -88,4 +89,11 @@ func (f *fakeAppDeps) TailServiceLogs(string, int) ([]string, error) {
 
 func (f *fakeAppDeps) TailProcessLogs(int, int) ([]string, error) {
 	return nil, nil
+}
+
+func (f *fakeAppDeps) LatestServiceLogPath(name string) (string, error) {
+	if path, ok := f.logPaths[name]; ok {
+		return path, nil
+	}
+	return "", fmt.Errorf("no logs for %q", name)
 }

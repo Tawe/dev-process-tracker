@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/devports/devpt/pkg/buildinfo"
@@ -540,6 +541,52 @@ func TestView_SortModeDisplay(t *testing.T) {
 			assert.Contains(t, output, "Name (1)")
 		})
 	}
+}
+
+func TestView_ManagedCrashContextAndSymbols(t *testing.T) {
+	stoppedAt := time.Date(2026, 3, 27, 21, 54, 25, 0, time.UTC)
+	deps := &fakeAppDeps{
+		services: []*models.ManagedService{
+			{
+				Name:     "test-go-basic-fake",
+				CWD:      "/Users/kirby/.config/dev-process-tracker/sandbox/servers/go-basic",
+				Command:  "go run .",
+				Ports:    []int{3401},
+				LastStop: &stoppedAt,
+			},
+		},
+		servers: []*models.ServerInfo{
+			{
+				ManagedService: &models.ManagedService{Name: "test-go-basic-fake", CWD: "/Users/kirby/.config/dev-process-tracker/sandbox/servers/go-basic", Command: "go run .", Ports: []int{3401}},
+				Status:         "crashed",
+				Source:         models.SourceManaged,
+				CrashReason:    "exit status 1",
+				CrashLogTail: []string{
+					"2026/03/27 21:54:25 [go-basic] listening on http://localhost:3400",
+					"2026/03/27 21:54:25 listen tcp :3400: bind: address already in use",
+					"exit status 1",
+				},
+			},
+		},
+		logPaths: map[string]string{
+			"test-go-basic-fake": "~/.config/devpt/logs/test-go-basic-fake/2026-03-12T22-14-37.log",
+		},
+	}
+
+	model := newTopModel(deps)
+	model.width = 180
+	model.height = 30
+	model.mode = viewModeTable
+	model.focus = focusManaged
+	model.managedSel = 0
+
+	output := model.View().Content
+	assert.Contains(t, output, "✘")
+	assert.Contains(t, output, "test-go-basic-fake [crashed]")
+	assert.Contains(t, output, "Headline: exit status 1")
+	assert.Contains(t, output, "Log: ~/.config/devpt/logs/test-go-basic-fake/2026-03-12T22-14-37.log")
+	assert.Contains(t, output, "listen tcp :3400: bind: address already in use")
+	assert.Contains(t, output, "Source: managed")
 }
 
 func findLineContaining(lines []string, pattern string) string {

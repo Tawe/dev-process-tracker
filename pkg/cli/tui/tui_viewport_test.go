@@ -310,6 +310,33 @@ func TestMouseModeEnabled(t *testing.T) {
 	})
 }
 
+func findRunningRowClickY(model *topModel, needle string) int {
+	_ = model.View()
+	viewportLines := strings.Split(model.table.runningVP.View(), "\n")
+	for i, line := range viewportLines {
+		if strings.Contains(line, needle) {
+			return model.tableTopLines(model.width) + i - 1
+		}
+	}
+	return -1
+}
+
+func findManagedRowClickY(model *topModel, needle string) int {
+	_ = model.View()
+	viewportLines := strings.Split(model.table.managedVP.View(), "\n")
+	for i, line := range viewportLines {
+		if strings.Contains(line, needle) {
+			return model.tableTopLines(model.width) + model.table.lastRunningHeight + i
+		}
+	}
+	return -1
+}
+
+func clickTableAt(model *topModel, y int) *topModel {
+	newModel, _ := model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 10, Y: y})
+	return newModel.(*topModel)
+}
+
 func TestTableMouseClickSelection(t *testing.T) {
 	t.Run("click on running service row selects it", func(t *testing.T) {
 		model := newTestModel()
@@ -329,7 +356,7 @@ func TestTableMouseClickSelection(t *testing.T) {
 		clickY := -1
 		for i, line := range viewportLines {
 			if strings.Contains(line, "3001") {
-				clickY = model.tableTopLines(model.width) + i
+				clickY = model.tableTopLines(model.width) + i - 1
 				break
 			}
 		}
@@ -361,7 +388,7 @@ func TestTableMouseClickSelection(t *testing.T) {
 		model.table.runningVP.SetYOffset(5)
 
 		targetAbsoluteLine := 2 + 5
-		clickY := model.tableTopLines(model.width) + (targetAbsoluteLine - model.table.runningVP.YOffset())
+		clickY := model.tableTopLines(model.width) + (targetAbsoluteLine - model.table.runningVP.YOffset()) - 1
 		newModel, _ := model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 10, Y: clickY})
 		m := newModel.(*topModel)
 		assert.Equal(t, 5, m.selected)
@@ -400,7 +427,7 @@ func TestTableMouseClickSelection(t *testing.T) {
 		clickY := -1
 		for i, line := range viewportLines {
 			if strings.Contains(line, "beta [stopped]") {
-				clickY = model.tableTopLines(model.width) + model.table.lastRunningHeight + 1 + i
+				clickY = model.tableTopLines(model.width) + model.table.lastRunningHeight + i
 				break
 			}
 		}
@@ -412,6 +439,82 @@ func TestTableMouseClickSelection(t *testing.T) {
 		m := newModel.(*topModel)
 		assert.Equal(t, focusManaged, m.focus)
 		assert.Equal(t, 1, m.managedSel)
+	})
+
+	t.Run("red-green running rows map to clicked visible server", func(t *testing.T) {
+		model := newTestModel()
+		model.mode = viewModeTable
+		model.servers = []*models.ServerInfo{
+			{ProcessRecord: &models.ProcessRecord{PID: 1001, Port: 3000, Command: "node server.js"}},
+			{ProcessRecord: &models.ProcessRecord{PID: 1002, Port: 3001, Command: "go run ."}},
+			{ProcessRecord: &models.ProcessRecord{PID: 1003, Port: 3002, Command: "python app.py"}},
+		}
+
+		cases := []struct {
+			needle   string
+			wantPort int
+		}{
+			{needle: "3000", wantPort: 3000},
+			{needle: "3001", wantPort: 3001},
+			{needle: "3002", wantPort: 3002},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.needle, func(t *testing.T) {
+				y := findRunningRowClickY(model, tc.needle)
+				assert.NotEqual(t, -1, y)
+				m := clickTableAt(model, y)
+				assert.Equal(t, focusRunning, m.focus)
+				visible := m.visibleServers()
+				if assert.Greater(t, len(visible), m.selected) {
+					assert.Equal(t, tc.wantPort, visible[m.selected].ProcessRecord.Port)
+				}
+			})
+		}
+	})
+
+	t.Run("red-green managed rows map to exact selected index", func(t *testing.T) {
+		model := newTestModel()
+		model.mode = viewModeTable
+		model.width = 100
+		model.height = 20
+		model.focus = focusRunning
+		model.selected = 0
+		model.managedSel = 0
+		model.app = &fakeAppDeps{
+			servers: []*models.ServerInfo{{
+				ProcessRecord: &models.ProcessRecord{PID: 1001, Port: 3000, Command: "node server.js", CWD: "/tmp/app", ProjectRoot: "/tmp/app"},
+				Status:        "running",
+			}},
+			services: []*models.ManagedService{
+				{Name: "alpha", CWD: "/tmp/alpha", Command: "npm run dev", Ports: []int{4100}},
+				{Name: "beta", CWD: "/tmp/beta", Command: "npm run dev", Ports: []int{4200}},
+				{Name: "gamma", CWD: "/tmp/gamma", Command: "npm run dev", Ports: []int{4300}},
+			},
+		}
+		model.servers = []*models.ServerInfo{{
+			ProcessRecord: &models.ProcessRecord{PID: 1001, Port: 3000, Command: "node server.js", CWD: "/tmp/app", ProjectRoot: "/tmp/app"},
+			Status:        "running",
+		}}
+
+		cases := []struct {
+			needle string
+			want   int
+		}{
+			{needle: "alpha [stopped]", want: 0},
+			{needle: "beta [stopped]", want: 1},
+			{needle: "gamma [stopped]", want: 2},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.needle, func(t *testing.T) {
+				y := findManagedRowClickY(model, tc.needle)
+				assert.NotEqual(t, -1, y)
+				m := clickTableAt(model, y)
+				assert.Equal(t, focusManaged, m.focus)
+				assert.Equal(t, tc.want, m.managedSel)
+			})
+		}
 	})
 
 	t.Run("wheel events are passed to viewport for scrolling", func(t *testing.T) {

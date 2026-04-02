@@ -14,6 +14,63 @@ import (
 	"github.com/devports/devpt/pkg/scanner"
 )
 
+func TestTUIAdapterLatestServiceLogPath_ReturnsManagedLogFile(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	reg := registry.NewRegistry(filepath.Join(tmp, "registry.json"))
+	if err := reg.Load(); err != nil {
+		t.Fatalf("load registry: %v", err)
+	}
+
+	now := time.Now()
+	port := reserveTestPort(t)
+	if err := reg.AddService(&models.ManagedService{
+		Name:      "worker",
+		CWD:       tmp,
+		Command:   fmt.Sprintf("/usr/bin/python3 -m http.server %d --bind 127.0.0.1", port),
+		Ports:     []int{port},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("add service: %v", err)
+	}
+
+	app := &App{
+		registry:       reg,
+		scanner:        scanner.NewProcessScanner(),
+		resolver:       scanner.NewProjectResolver(),
+		detector:       scanner.NewAgentDetector(),
+		processManager: process.NewManager(filepath.Join(tmp, "logs")),
+	}
+
+	if err := app.StartCmd("worker"); err != nil {
+		t.Fatalf("start service: %v", err)
+	}
+	waitForTCPListener(t, port)
+
+	adapter, ok := NewTUIAdapter(app).(tuiAdapter)
+	if !ok {
+		t.Fatalf("expected tuiAdapter type")
+	}
+
+	logPath, err := adapter.LatestServiceLogPath("worker")
+	if err != nil {
+		t.Fatalf("latest log path: %v", err)
+	}
+	if logPath == "" {
+		t.Fatalf("expected non-empty log path")
+	}
+
+	svc := reg.GetService("worker")
+	if svc == nil || svc.LastPID == nil || *svc.LastPID <= 0 {
+		t.Fatalf("expected started service PID, got %#v", svc)
+	}
+	if err := app.processManager.Stop(*svc.LastPID, 2*time.Second); err != nil && err != process.ErrNeedSudo {
+		t.Fatalf("cleanup stop: %v", err)
+	}
+}
+
 func TestTUIAdapterRestartCmd_SuppressesCLIProgressOutput(t *testing.T) {
 	t.Parallel()
 

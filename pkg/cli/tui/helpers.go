@@ -234,6 +234,65 @@ func (m topModel) crashReasonForService(name string) string {
 	return ""
 }
 
+func (m topModel) serverInfoForService(name string) *models.ServerInfo {
+	for _, srv := range m.servers {
+		if srv.ManagedService != nil && srv.ManagedService.Name == name {
+			return srv
+		}
+	}
+	return nil
+}
+
+func (m topModel) selectedManagedService() *models.ManagedService {
+	managed := m.managedServices()
+	if m.managedSel < 0 || m.managedSel >= len(managed) {
+		return nil
+	}
+	return managed[m.managedSel]
+}
+
+func managedStatusSymbol(state string) string {
+	switch state {
+	case "running":
+		return "▶"
+	case "crashed":
+		return "✘"
+	case "starting":
+		return "…"
+	default:
+		return "■"
+	}
+}
+
+func managedStatusColor(state string) string {
+	switch state {
+	case "running":
+		return "10"
+	case "crashed":
+		return "9"
+	case "starting":
+		return "11"
+	default:
+		return "8"
+	}
+}
+
+func nonEmptyTail(lines []string, n int) []string {
+	if n <= 0 || len(lines) == 0 {
+		return nil
+	}
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			filtered = append(filtered, line)
+		}
+	}
+	if len(filtered) <= n {
+		return filtered
+	}
+	return filtered[len(filtered)-n:]
+}
+
 func (m topModel) calculateGutterWidth() int {
 	totalLines := m.viewport.TotalLineCount()
 	if totalLines <= 0 {
@@ -317,7 +376,8 @@ func (m *topModel) handleTableMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) 
 	mouse := msg.Mouse()
 
 	headerOffset := m.tableTopLines(m.width)
-	viewportY := mouse.Y - headerOffset
+	// Bubble Tea mouse row coordinates are effectively one line below our table math.
+	viewportY := mouse.Y - headerOffset + 1
 	if viewportY < 0 {
 		return m, nil
 	}
@@ -366,6 +426,7 @@ func (m *topModel) handleTableMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) 
 		return m, nil
 	}
 
+	// Managed header sits directly above the managed viewport content.
 	if viewportY == m.table.lastRunningHeight {
 		return m, nil
 	}
