@@ -109,6 +109,9 @@ Cache can be invalidated selectively. Important for performance (lsof calls are 
 
 ## Conventions
 
+### Spec Updates
+- Removed specs: delete cleanly, re-render. No ~~strikethrough~~, no **REMOVED** annotations, no tombstone rows.
+
 ### Naming
 - Packages use lowercase, no underscores (Go convention)
 - Function names: `CommandName()` pattern for exported, `helperName()` for unexported

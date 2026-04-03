@@ -100,10 +100,24 @@ func (m *topModel) activeModalOverlay(width int) string {
 	case modalHelp:
 		return m.renderHelpModal(width)
 	case modalConfirm:
+		if m.confirm != nil && isGroupConfirmKind(m.confirm.kind) {
+			return m.renderGroupConfirmModal(width)
+		}
 		return m.renderConfirmModal(width)
 	default:
 		return ""
 	}
+}
+
+func isGroupConfirmKind(k confirmKind) bool {
+	return k == confirmGroupStop || k == confirmGroupRestart || k == confirmGroupStart || k == confirmGroupRemove
+}
+
+func (m *topModel) renderGroupConfirmModal(width int) string {
+	if m.confirm == nil {
+		return ""
+	}
+	return renderModal("Group Action", m.confirm.prompt, "Enter/y confirm, n/Esc cancel", width, 72, "11")
 }
 
 func overlayModal(background, overlay string, width int) string {

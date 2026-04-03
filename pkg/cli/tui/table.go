@@ -113,6 +113,13 @@ func (m *topModel) footerKeyMap() keyMap {
 		key.WithKeys("/"),
 		key.WithHelp("/", m.footerFilterLabel()),
 	)
+	if m.groupHighlightNamespace != nil {
+		green := lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true).Render("group mode")
+		k.GroupToggle = key.NewBinding(
+			key.WithKeys("g"),
+			key.WithHelp("g", green),
+		)
+	}
 	return k
 }
 
@@ -313,6 +320,21 @@ func (m *topModel) renderRunningTable(width int) string {
 		lines = append(lines, fitLine(line, width))
 	}
 
+	// Apply visual group selection highlight when group toggle is active (before selection highlight)
+	if m.groupHighlightNamespace != nil {
+		groupStyle := lipgloss.NewStyle().Background(lipgloss.Color("61")).Width(width)
+		for i, srv := range visible {
+			if i == m.selected {
+				continue // active row keeps normal selection color
+			}
+			name := m.serviceNameFor(srv)
+			if extractNamespace(name) == *m.groupHighlightNamespace {
+				idx := rowIndices[i]
+				lines[idx] = groupStyle.Render(lines[idx])
+			}
+		}
+	}
+
 	if m.selected >= 0 && m.selected < len(visible) {
 		idx := rowIndices[m.selected]
 		bg := "8"
@@ -405,16 +427,30 @@ func (m *topModel) renderManagedList(width int) string {
 			plainLine = fmt.Sprintf("%s (ports: %v)", plainLine, svc.Ports)
 		}
 
+		// Determine background for this row
+		var rowBg string
+		var rowFg string
+		switch {
+		case i == m.managedSel && m.focus == focusManaged:
+			rowBg = "57"
+			rowFg = "15"
+		case m.groupHighlightNamespace != nil && extractNamespace(svc.Name) == *m.groupHighlightNamespace:
+			rowBg = "61"
+		case i == m.managedSel:
+			rowBg = "8"
+			rowFg = "15"
+		}
+
 		var line string
-		if i == m.managedSel {
-			bg := "8"
-			if m.focus == focusManaged {
-				bg = "57"
+		if rowBg != "" {
+			// Single render path for any row with background — no strings.Replace, no ANSI breakage.
+			style := lipgloss.NewStyle().Background(lipgloss.Color(rowBg)).Width(width)
+			if rowFg != "" {
+				style = style.Foreground(lipgloss.Color(rowFg))
 			}
-			// Keep selected-row styling simple so the full line highlights consistently.
-			line = lipgloss.NewStyle().Background(lipgloss.Color(bg)).Foreground(lipgloss.Color("15")).Render(fitLine(plainLine, width))
+			line = style.Render(fitLine(plainLine, width))
 		} else {
-			// Non-selected: color just the state symbol.
+			// No background — safe to color symbol separately.
 			symbolStyled := lipgloss.NewStyle().Foreground(lipgloss.Color(symbolColor)).Bold(true).Render(symbolChar)
 			line = strings.Replace(plainLine, symbolChar, symbolStyled, 1)
 			line = fitAnsiLine(line, width)

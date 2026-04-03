@@ -421,6 +421,7 @@ func (m *topModel) handleTableMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) 
 			m.focus = focusRunning
 			m.selected = newSelected
 			m.tableFollowSelection = true
+		m.groupHighlightNamespace = nil
 			m.lastInput = time.Now()
 		}
 		return m, nil
@@ -443,8 +444,13 @@ func (m *topModel) handleTableMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) 
 			m.focus = focusManaged
 			m.tableFollowSelection = true
 			m.lastInput = time.Now()
+			if mouse.Mod&tea.ModShift != 0 {
+				m.prepareGroupStartConfirm()
+				return m, nil
+			}
 			return m.handleEnterKey()
 		}
+		m.groupHighlightNamespace = nil
 		m.focus = focusManaged
 		m.managedSel = newManagedSel
 		m.tableFollowSelection = true

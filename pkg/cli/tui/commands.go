@@ -237,10 +237,14 @@ func (m *topModel) executeConfirm(yes bool) tea.Cmd {
 	c := *m.confirm
 	m.closeModal()
 	if !yes {
+		m.groupHighlightNamespace = nil
 		m.cmdStatus = "Cancelled"
 		return nil
 	}
 	switch c.kind {
+	case confirmGroupStop, confirmGroupRestart, confirmGroupStart, confirmGroupRemove:
+		m.groupHighlightNamespace = nil
+		m.executeGroupConfirm(c)
 	case confirmStopPID:
 		if err := m.app.StopProcess(c.pid, 5*time.Second); err != nil {
 			if errors.Is(err, process.ErrNeedSudo) {
@@ -310,4 +314,271 @@ func (m topModel) healthCmd() tea.Cmd {
 		}
 		return healthMsg{icons: icons, details: details}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Group actions (namespace-based process clustering)
+// ---------------------------------------------------------------------------
+
+func (m *topModel) prepareGroupStopConfirm() {
+	if m.mode != viewModeTable {
+		return
+	}
+	namespace := namespaceOfSelected(m)
+	m.groupHighlightNamespace = &namespace
+	if namespace == "-" {
+		return
+	}
+	group := groupForNamespace(m, namespace)
+	if len(group) == 0 {
+		m.cmdStatus = "No group members found for namespace \"" + namespace + "\""
+		return
+	}
+	names := groupServiceNames(group)
+	pids := groupPIDs(group)
+	prompt := fmt.Sprintf("Stop %d process(es) in namespace \"%s\"?\n%s", len(group), namespace, strings.Join(names, ", "))
+	m.openConfirmModal(&confirmState{
+		kind:         confirmGroupStop,
+		prompt:       prompt,
+		namespace:    namespace,
+		serviceNames: names,
+		pids:         pids,
+	})
+}
+
+func (m *topModel) prepareGroupRestartConfirm() {
+	if m.mode != viewModeTable {
+		return
+	}
+	namespace := namespaceOfSelected(m)
+	m.groupHighlightNamespace = &namespace
+	if namespace == "-" {
+		return
+	}
+
+	// Find all namespace members: managed services (running, crashed, stopped)
+	// plus any unmanaged running servers in the namespace.
+	managed := m.managedServices()
+	managedSet := make(map[string]bool)
+	var toRestart []string
+	var toStart []string
+	var pids []int
+	for _, svc := range managed {
+		if extractNamespace(svc.Name) != namespace {
+			continue
+		}
+		managedSet[svc.Name] = true
+		if m.isServiceRunning(svc.Name) {
+			toRestart = append(toRestart, svc.Name)
+			for _, srv := range m.servers {
+				if srv.ManagedService != nil && srv.ManagedService.Name == svc.Name && srv.ProcessRecord != nil && srv.ProcessRecord.PID > 0 {
+					pids = append(pids, srv.ProcessRecord.PID)
+				}
+			}
+		} else {
+			toStart = append(toStart, svc.Name)
+		}
+	}
+
+	// Also include unmanaged running servers in the namespace
+	for _, srv := range m.visibleServers() {
+		if srv == nil || srv.ProcessRecord == nil {
+			continue
+		}
+		name := m.serviceNameFor(srv)
+		if extractNamespace(name) != namespace {
+			continue
+		}
+		if srv.ManagedService != nil {
+			continue // already handled above
+		}
+		toRestart = append(toRestart, name)
+		pids = append(pids, srv.ProcessRecord.PID)
+	}
+
+	if len(toRestart) == 0 && len(toStart) == 0 {
+		m.cmdStatus = "No group members found for namespace \"" + namespace + "\""
+		return
+	}
+
+	// Build descriptive prompt
+	var parts []string
+	allNames := append(toRestart, toStart...)
+	if len(toRestart) > 0 {
+		parts = append(parts, fmt.Sprintf("restart %d", len(toRestart)))
+	}
+	if len(toStart) > 0 {
+		parts = append(parts, fmt.Sprintf("start %d stopped", len(toStart)))
+	}
+	prompt := fmt.Sprintf("%s service(s) in namespace \"%s\"?\n%s",
+		strings.Join(parts, " and "),
+		namespace,
+		strings.Join(allNames, ", "))
+
+	m.openConfirmModal(&confirmState{
+		kind:         confirmGroupRestart,
+		prompt:       prompt,
+		namespace:    namespace,
+		serviceNames: allNames,
+		pids:         pids,
+	})
+}
+
+func (m *topModel) prepareGroupStartConfirm() {
+	if m.mode != viewModeTable {
+		return
+	}
+	if m.focus == focusRunning {
+		// C-1.5 / C-1.8: Shift+Enter on running list is no-op (view logs not groupable)
+		return
+	}
+	namespace := namespaceOfSelected(m)
+	m.groupHighlightNamespace = &namespace
+	if namespace == "-" {
+		return
+	}
+
+	// Group start targets only stopped managed services in the namespace
+	managed := m.managedServices()
+	var stopped []string
+	for _, svc := range managed {
+		if extractNamespace(svc.Name) != namespace {
+			continue
+		}
+		if !m.isServiceRunning(svc.Name) {
+			stopped = append(stopped, svc.Name)
+		}
+	}
+
+	if len(stopped) == 0 {
+		m.cmdStatus = "All services in namespace \"" + namespace + "\" are already running"
+		return
+	}
+
+	prompt := fmt.Sprintf("Start %d stopped service(s) in namespace \"%s\"?\n%s", len(stopped), namespace, strings.Join(stopped, ", "))
+	m.openConfirmModal(&confirmState{
+		kind:         confirmGroupStart,
+		prompt:       prompt,
+		namespace:    namespace,
+		serviceNames: stopped,
+	})
+}
+
+func (m *topModel) prepareGroupRemoveConfirm() {
+	if m.mode != viewModeTable {
+		return
+	}
+	if m.focus != focusManaged {
+		return
+	}
+	namespace := namespaceOfSelected(m)
+	m.groupHighlightNamespace = &namespace
+	if namespace == "-" {
+		return
+	}
+
+	// Group remove targets all managed services in the namespace
+	managed := m.managedServices()
+	var targets []string
+	for _, svc := range managed {
+		if extractNamespace(svc.Name) == namespace {
+			targets = append(targets, svc.Name)
+		}
+	}
+
+	if len(targets) == 0 {
+		m.cmdStatus = "No managed services found for namespace \"" + namespace + "\""
+		return
+	}
+
+	prompt := fmt.Sprintf("Remove %d service(s) from registry in namespace \"%s\"?\n%s", len(targets), namespace, strings.Join(targets, ", "))
+	m.openConfirmModal(&confirmState{
+		kind:         confirmGroupRemove,
+		prompt:       prompt,
+		namespace:    namespace,
+		serviceNames: targets,
+	})
+}
+
+// executeGroupConfirm handles the confirmed group action by iterating over
+// each member and calling the existing single-item functions.
+func (m *topModel) executeGroupConfirm(c confirmState) {
+	switch c.kind {
+	case confirmGroupStop:
+		var results []string
+		for i, pid := range c.pids {
+			name := ""
+			if i < len(c.serviceNames) {
+				name = c.serviceNames[i]
+			}
+			if err := m.app.StopProcess(pid, 5*time.Second); err != nil {
+				if isProcessFinishedErr(err) {
+					results = append(results, fmt.Sprintf("PID %d already exited", pid))
+					if name != "" {
+						_ = m.app.ClearServicePID(name)
+					}
+				} else {
+					results = append(results, fmt.Sprintf("PID %d: %v", pid, err))
+				}
+			} else {
+				results = append(results, fmt.Sprintf("Stopped PID %d", pid))
+				if name != "" {
+					_ = m.app.ClearServicePID(name)
+				}
+			}
+		}
+		m.cmdStatus = strings.Join(results, "; ")
+
+	case confirmGroupRestart:
+		var results []string
+		for _, name := range c.serviceNames {
+			if m.isServiceRunning(name) {
+				if err := m.app.RestartCmd(name); err != nil {
+					results = append(results, fmt.Sprintf("%s: %v", name, err))
+				} else {
+					results = append(results, fmt.Sprintf("Restarted %q", name))
+					m.starting[name] = time.Now()
+				}
+			} else {
+				// Stopped/crashed service — start it instead
+				if err := m.app.StartCmd(name); err != nil {
+					results = append(results, fmt.Sprintf("%s: %v", name, err))
+				} else {
+					results = append(results, fmt.Sprintf("Started %q", name))
+					m.starting[name] = time.Now()
+				}
+		}
+	}
+		m.cmdStatus = strings.Join(results, "; ")
+
+	case confirmGroupStart:
+		var results []string
+		for _, name := range c.serviceNames {
+			if err := m.app.StartCmd(name); err != nil {
+				results = append(results, fmt.Sprintf("%s: %v", name, err))
+			} else {
+				results = append(results, fmt.Sprintf("Started %q", name))
+				m.starting[name] = time.Now()
+			}
+		}
+		m.cmdStatus = strings.Join(results, "; ")
+
+	case confirmGroupRemove:
+		var results []string
+		for _, name := range c.serviceNames {
+			svc := m.app.GetService(name)
+			if svc != nil {
+				copySvc := *svc
+				m.removed[name] = &copySvc
+			}
+			if err := m.app.RemoveCmd(name); err != nil {
+				results = append(results, fmt.Sprintf("%s: %v", name, err))
+			} else {
+				results = append(results, fmt.Sprintf("Removed %q", name))
+			}
+		}
+		m.cmdStatus = strings.Join(results, "; ")
+	}
+
+	m.refresh()
 }
