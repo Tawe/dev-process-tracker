@@ -489,6 +489,17 @@ func (m *topModel) renderManagedDetails(width int) string {
 		lines = append(lines, fitLine(fmt.Sprintf(" Source: %s", srv.Source), width))
 	}
 
+	// Service metadata: CWD, ports, command (rendered after source, before crash context)
+	if svc.CWD != "" {
+		lines = append(lines, fitLine(fmt.Sprintf(" Dir: %s", svc.CWD), width))
+	}
+	if len(svc.Ports) > 0 {
+		lines = append(lines, fitLine(fmt.Sprintf(" Port: %s", formatPorts(svc.Ports)), width))
+	}
+	if svc.Command != "" {
+		lines = append(lines, fitLine(fmt.Sprintf(" Cmd: %s", svc.Command), width))
+	}
+
 	if state == "crashed" {
 		if reason := m.crashReasonForService(svc.Name); reason != "" {
 			lines = append(lines, fitLine(fmt.Sprintf(" Headline: %s", reason), width))

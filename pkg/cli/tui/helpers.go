@@ -133,6 +133,17 @@ func fitLine(line string, width int) string {
 	return line + strings.Repeat(" ", width-lineWidth)
 }
 
+func formatPorts(ports []int) string {
+	if len(ports) == 0 {
+		return ""
+	}
+	strs := make([]string, len(ports))
+	for i, p := range ports {
+		strs[i] = strconv.Itoa(p)
+	}
+	return strings.Join(strs, ", ")
+}
+
 func pathBase(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
