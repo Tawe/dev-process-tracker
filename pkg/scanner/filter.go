@@ -67,6 +67,7 @@ func IsDevProcess(record *models.ProcessRecord, commandInfo string) bool {
 		"pytest",
 		"jest",
 		"vitest",
+		"cloudflared", // Cloudflare tunnel for dev exposure
 	}
 
 	for _, pattern := range devPatterns {
@@ -78,12 +79,19 @@ func IsDevProcess(record *models.ProcessRecord, commandInfo string) bool {
 	return false
 }
 
-// FilterDevProcesses keeps only development-related processes
-func FilterDevProcesses(records []*models.ProcessRecord, commandMap map[int]string) []*models.ProcessRecord {
+// FilterDevProcesses keeps only development-related processes.
+// Processes with PIDs in managedPIDs are always kept (they belong to managed services).
+func FilterDevProcesses(records []*models.ProcessRecord, commandMap map[int]string, managedPIDs map[int]bool) []*models.ProcessRecord {
 	filtered := make([]*models.ProcessRecord, 0)
 
 	for _, record := range records {
 		if record == nil {
+			continue
+		}
+
+		// Always keep processes that belong to managed services
+		if managedPIDs[record.PID] {
+			filtered = append(filtered, record)
 			continue
 		}
 

@@ -2,7 +2,7 @@
 
 ![Dev Process Tracker hero](devpttitle.png)
 
-Dev Process Tracker (`devpt`) helps you track and control local dev services from one place.
+Dev Process Tracker (`devpt`) tracks and controls local dev services.
 
 ## What it does
 
@@ -27,7 +27,7 @@ go test ./...
 
 ## Challenge smoke test
 
-Run a full checklist-oriented smoke flow in an isolated temp home:
+Run a smoke flow in an isolated temp home:
 
 ```bash
 ./scripts/challenge_smoke_test.sh
@@ -51,6 +51,11 @@ devpt restart my-app
 
 # Logs
 devpt logs my-app --lines 100
+
+# Batch operations
+devpt start api frontend worker
+devpt restart 'web-*'
+devpt stop web-api:3000
 ```
 
 ## CLI commands
@@ -61,18 +66,41 @@ devpt logs my-app --lines 100
 devpt
 ```
 
-Opens the interactive monitor.
+Opens the TUI.
 
 ### Manage services
 
 ```bash
 devpt add <name> <cwd> "<cmd>" [ports...]
-devpt start <name>
-devpt stop <name>
+devpt start <name> [<name>...]          # Start one or more services
+devpt stop <name> [<name>...]           # Stop one or more services
 devpt stop --port <port>
-devpt restart <name>
+devpt restart <name> [<name>...]        # Restart one or more services
 devpt logs <name> [--lines N]
 ```
+
+### Batch operations
+
+Start, stop, or restart multiple services at once:
+
+```bash
+# Start multiple specific services
+devpt start api frontend worker
+
+# Use glob patterns to match service names
+devpt start 'web-*'        # Starts all services matching 'web-*'
+devpt stop '*-test'        # Stops all services ending with '-test'
+devpt restart 'claude-*'   # Restarts all services starting with 'claude-*'
+
+# Target specific service by name:port
+devpt start web-api:3000   # Start web-api on port 3000 only
+devpt stop "some:thing"    # Service with colon in literal name
+
+# Mix patterns and specific names
+devpt start api 'web-*' worker
+```
+
+Batch operations run sequentially, print per-service status, continue on failure, and return exit code `1` if any service fails.
 
 ### Inspect
 
@@ -81,7 +109,7 @@ devpt ls [--details]
 devpt status <name|port>
 ```
 
-`devpt status <name>` now includes a `CRASH DETAILS` section for crashed managed services, including an inferred reason and recent log lines.
+`devpt status <name>` includes `CRASH DETAILS` for crashed managed services with an inferred reason and recent log lines.
 
 ### Meta
 
@@ -96,22 +124,35 @@ devpt --version
 - `Enter`:
   - running list: open logs
   - managed list: start selected service
+- mouse click: select rows in either list
+- mouse wheel / page keys: scroll the active viewport
 - `Ctrl+E`: stop selected running service (with confirm)
 - `Ctrl+R`: restart selected running managed service
 - `Ctrl+A`: open command input (`add ...` prefilled)
 - `x` / `Delete` / `Ctrl+D`: remove selected managed service (with confirm)
-- `/`: open filter input
+- `/`: edit the inline filter in the footer
 - `Ctrl+L`: clear filter
 - `s`: cycle sort mode
 - `h`: toggle health detail
-- `?`: open help
+- `?`: open help modal
 - `b`: back from logs/command
 - `f`: toggle log follow mode (in logs view)
 - `q`: quit
 
+## TUI layout
+
+- Running services are shown in the top table. The active sort column header is bold.
+- Managed services are shown in a separate section below with the total count in the section title.
+- Filter state lives in the footer help row:
+  - default: `/ filter`
+  - editing: `/ >query`
+  - applied: `/ query`
+- Help and confirmation are rendered as centered modals over the table.
+- Logs view header is rendered as `Logs: <service> | Port: <port> | PID: <pid>`.
+
 ## TUI command input
 
-Inside TUI command mode (`:` or `Ctrl+A`), supported commands:
+TUI command mode (`:` or `Ctrl+A`) supports:
 
 ```text
 add <name> <cwd> "<cmd>" [ports...]
@@ -125,16 +166,16 @@ help
 
 ## AI Agent Detection
 
-Dev Process Tracker can identify servers started by AI agents (Claude, Cursor, Copilot, etc.). Detected servers show `agent:name` in the source column instead of `manual`.
+Detected AI-started servers show `agent:name` in the source column instead of `manual`.
 
 ### Detection methods
 
-1. **Parent process name** - If parent process is named `claude`, `cursor`, `copilot`, etc., it's detected as AI-started
-2. **Environment variables** - Detects `CLAUDE_*`, `CURSOR_*`, `COPILOT_*` env var prefixes (Linux only; macOS uses parent process check only)
+1. **Parent process name**: `claude`, `cursor`, `copilot`, and similar names
+2. **Environment variables**: `CLAUDE_*`, `CURSOR_*`, `COPILOT_*` prefixes on platforms where available
 
-### Naming convention for AI-managed services
+### Naming convention
 
-When registering managed services with `devpt add`, use a naming prefix to indicate ownership:
+Use a naming prefix if you want ownership to be obvious in the registry:
 
 ```bash
 # Services started by Claude
@@ -148,11 +189,7 @@ devpt add cursor-worker ~/projects/worker "npm start" 4000
 devpt add copilot-service ~/projects/service "python app.py" 5000
 ```
 
-When you use `devpt start` on these services, the naming makes it clear which AI agent manages them in the registry.
-
-### Example: Testing with built-in test servers
-
-The `sandbox/servers/` directory includes test servers for experimenting:
+### Example with built-in test servers
 
 ```bash
 # From repo root, register test servers with AI owner names
@@ -175,12 +212,14 @@ devpt start cursor-node-warnings
 devpt
 ```
 
-Each test server exposes `/health` (JSON) and `/` (plain text) endpoints.
+Each test server exposes `/health` and `/`.
 
 ## Notes
 
 - Managed services are registry entries you control via `devpt`.
 - Running list is process-driven. Managed services can appear even before a port is bound.
+- `name:port` is supported for CLI targeting where multiple services share a base name.
+- Quote glob patterns like `'web-*'` so your shell does not expand them first.
 - If stop needs elevated permissions, TUI asks for confirmation to run `sudo kill -9 <pid>`.
 - Service names can include a prefix (e.g., `claude-`, `cursor-`, `copilot-`) to indicate AI agent ownership in your registry.
 - No login or API credentials are required for judges to run this project locally.

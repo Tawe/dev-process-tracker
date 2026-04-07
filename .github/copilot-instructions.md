@@ -140,6 +140,25 @@ Cache can be invalidated selectively. Important for performance (lsof calls are 
 - Exit conditions: user presses 'q', or explicit quit() command
 - Key handlers prioritized: modal state (logs/input) takes precedence over list navigation
 
+## Before Submitting Changes
+
+Always run these checks before considering work complete:
+
+```bash
+# 1. Build succeeds
+go build ./...
+
+# 2. All tests pass
+go test ./...
+
+# 3. CLI runs without error
+go build -o devpt ./cmd/devpt && ./devpt ls
+```
+
+If adding user-facing features, also update README.md and QUICKSTART.md.
+
+## Common Tasks
+
 ## Common Tasks
 
 ### Add a New CLI Command
@@ -175,6 +194,7 @@ Cache can be invalidated selectively. Important for performance (lsof calls are 
 - **QUICKSTART.md** - Getting started guide for new users
 - **IMPLEMENTATION_SUMMARY.md** - Architecture and feature overview (reference only)
 - **techspec.md** - Original technical specification
+- **.agents/skills/devpt-release/SKILL.md** - Release workflow (changelog + version bump)
 
 Update README and QUICKSTART when adding user-facing features or commands.
 

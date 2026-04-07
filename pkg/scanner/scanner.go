@@ -81,6 +81,7 @@ if len(fields) < 9 {
 return nil, fmt.Errorf("insufficient fields")
 }
 
+command := fields[0]
 pidStr := fields[1]
 nameField := fields[8]
 
@@ -97,7 +98,7 @@ return nil, fmt.Errorf("no port")
 return &models.ProcessRecord{
 PID:      pid,
 Port:     port,
-Command:  "", // Will be enriched later
+Command:  command, // Preserve lsof command name as fallback if ps lookup fails
 CWD:      "", // Skip for now - was causing hangs
 Protocol: "tcp",
 }, nil
@@ -129,7 +130,9 @@ func (ps *ProcessScanner) enrichWithCommands(records []*models.ProcessRecord) {
 		cmd := exec.Command("ps", "-p", fmt.Sprintf("%d", record.PID), "-o", "command=")
 		output, err := cmd.Output()
 		if err == nil {
-			record.Command = strings.TrimSpace(string(output))
+			if fullCmd := strings.TrimSpace(string(output)); fullCmd != "" {
+				record.Command = fullCmd
+			}
 		}
 
 		if record.CWD == "" {
