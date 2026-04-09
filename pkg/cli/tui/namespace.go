@@ -9,17 +9,25 @@ import (
 
 var namespaceRegex = regexp.MustCompile(`^([a-zA-Z0-9]+)`)
 
-// extractNamespace returns the first alphanumeric prefix of a service name.
-// Returns "-" for empty, whitespace-only, or nil inputs.
+// extractNamespace returns the first alphanumeric prefix of a service name,
+// after skipping any leading non-alphanumeric characters (e.g., _, ., -).
+// Returns "-" for empty, whitespace-only, or strings with no alphanumeric characters.
 func extractNamespace(name string) string {
 	if name == "" {
 		return "-"
 	}
-	matches := namespaceRegex.FindStringSubmatch(name)
-	if len(matches) < 2 {
-		return "-" // no alphanumeric prefix found
+	// Skip leading non-alphanumeric characters
+	for i, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			// Found first alphanumeric character, extract prefix from here
+			matches := namespaceRegex.FindStringSubmatch(name[i:])
+			if len(matches) < 2 {
+				return "-"
+			}
+			return matches[1]
+		}
 	}
-	return matches[1]
+	return "-" // no alphanumeric characters found
 }
 
 // groupForNamespace returns all visible servers matching the given namespace prefix.

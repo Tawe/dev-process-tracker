@@ -36,12 +36,18 @@ func TestExtractNamespace(t *testing.T) {
 		{"single dash", "-", "-"},
 		{"whitespace only", "   ", "-"},
 
-		// Edge-1.2: collision / ambiguity
-		{"leading dash", "-gateway", "-"},
+		// Edge-1.2: collision / ambiguity (C-1.9: leading separators now skipped)
+		{"leading dash", "-gateway", "gateway"},
 		{"trailing dash", "api-", "api"},
 		{"multiple dashes", "api---gateway", "api"},
 		{"multiple dots", "pg...migrator", "pg"},
 		{"mixed separators", "api.gateway-v2", "api"},
+
+		// C-1.9: leading underscore handling (UAT bug fix)
+		{"leading underscore service", "_mdt-api", "mdt"},
+		{"leading underscore service 2", "_offgrid-worker", "offgrid"},
+		{"multiple leading underscores", "___test-api", "test"},
+		{"mixed leading special chars", "_.-redis-cache", "redis"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
