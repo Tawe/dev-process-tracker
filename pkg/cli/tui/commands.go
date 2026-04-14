@@ -119,7 +119,7 @@ func (m *topModel) runCommand(input string) string {
 			}
 			ports = append(ports, port)
 		}
-		if err := m.app.AddCmd(name, cwd, cmd, ports); err != nil {
+		if err := m.app.RegisterService(name, cwd, cmd, ports); err != nil {
 			return err.Error()
 		}
 		return fmt.Sprintf("Added %q", name)
@@ -141,7 +141,7 @@ func (m *topModel) runCommand(input string) string {
 		if svc == nil {
 			return fmt.Sprintf("no removed service %q in this session", args[1])
 		}
-		if err := m.app.AddCmd(svc.Name, svc.CWD, svc.Command, svc.Ports); err != nil {
+		if err := m.app.RegisterService(svc.Name, svc.CWD, svc.Command, svc.Ports); err != nil {
 			return err.Error()
 		}
 		delete(m.removed, args[1])
@@ -150,7 +150,7 @@ func (m *topModel) runCommand(input string) string {
 		if len(args) < 2 {
 			return "Usage: start <name>"
 		}
-		if err := m.app.StartCmd(args[1]); err != nil {
+		if err := m.app.StartService(args[1]); err != nil {
 			return err.Error()
 		}
 		m.starting[args[1]] = time.Now()
@@ -163,12 +163,12 @@ func (m *topModel) runCommand(input string) string {
 			if len(args) < 3 {
 				return "Usage: stop --port PORT"
 			}
-			if err := m.app.StopCmd(args[2]); err != nil {
+			if err := m.app.StopService(args[2]); err != nil {
 				return err.Error()
 			}
 			return fmt.Sprintf("Stopped port %s", args[2])
 		}
-		if err := m.app.StopCmd(args[1]); err != nil {
+		if err := m.app.StopService(args[1]); err != nil {
 			return err.Error()
 		}
 		return fmt.Sprintf("Stopped %q", args[1])
@@ -186,7 +186,7 @@ func (m topModel) startSelected() string {
 	if srv.ManagedService == nil {
 		return "Selected process is not a managed service"
 	}
-	if err := m.app.StartCmd(srv.ManagedService.Name); err != nil {
+	if err := m.app.StartService(srv.ManagedService.Name); err != nil {
 		return err.Error()
 	}
 	m.starting[srv.ManagedService.Name] = time.Now()
@@ -202,7 +202,7 @@ func (m topModel) restartSelected() string {
 	if srv.ManagedService == nil {
 		return "Selected process is not a managed service"
 	}
-	if err := m.app.RestartCmd(srv.ManagedService.Name); err != nil {
+	if err := m.app.RestartService(srv.ManagedService.Name); err != nil {
 		return err.Error()
 	}
 	m.starting[srv.ManagedService.Name] = time.Now()
@@ -273,7 +273,7 @@ func (m *topModel) executeConfirm(yes bool) tea.Cmd {
 			copySvc := *svc
 			m.removed[c.name] = &copySvc
 		}
-		if err := m.app.RemoveCmd(c.name); err != nil {
+		if err := m.app.RemoveService(c.name); err != nil {
 			m.cmdStatus = err.Error()
 		} else {
 			m.cmdStatus = fmt.Sprintf("Removed %q (use :restore %s)", c.name, c.name)
@@ -533,7 +533,7 @@ func (m *topModel) executeGroupConfirm(c confirmState) {
 		var results []string
 		for _, name := range c.serviceNames {
 			if m.isServiceRunning(name) {
-				if err := m.app.RestartCmd(name); err != nil {
+				if err := m.app.RestartService(name); err != nil {
 					results = append(results, fmt.Sprintf("%s: %v", name, err))
 				} else {
 					results = append(results, fmt.Sprintf("Restarted %q", name))
@@ -541,7 +541,7 @@ func (m *topModel) executeGroupConfirm(c confirmState) {
 				}
 			} else {
 				// Stopped/crashed service — start it instead
-				if err := m.app.StartCmd(name); err != nil {
+				if err := m.app.StartService(name); err != nil {
 					results = append(results, fmt.Sprintf("%s: %v", name, err))
 				} else {
 					results = append(results, fmt.Sprintf("Started %q", name))
@@ -554,7 +554,7 @@ func (m *topModel) executeGroupConfirm(c confirmState) {
 	case confirmGroupStart:
 		var results []string
 		for _, name := range c.serviceNames {
-			if err := m.app.StartCmd(name); err != nil {
+			if err := m.app.StartService(name); err != nil {
 				results = append(results, fmt.Sprintf("%s: %v", name, err))
 			} else {
 				results = append(results, fmt.Sprintf("Started %q", name))
@@ -571,7 +571,7 @@ func (m *topModel) executeGroupConfirm(c confirmState) {
 				copySvc := *svc
 				m.removed[name] = &copySvc
 			}
-			if err := m.app.RemoveCmd(name); err != nil {
+			if err := m.app.RemoveService(name); err != nil {
 				results = append(results, fmt.Sprintf("%s: %v", name, err))
 			} else {
 				results = append(results, fmt.Sprintf("Removed %q", name))

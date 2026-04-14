@@ -52,12 +52,12 @@ func (f *fakeAppDeps) ClearServicePID(string) error {
 	return nil
 }
 
-func (f *fakeAppDeps) AddCmd(name, cwd, command string, ports []int) error {
+func (f *fakeAppDeps) RegisterService(name, cwd, command string, ports []int) error {
 	f.services = append(f.services, &models.ManagedService{Name: name, CWD: cwd, Command: command, Ports: ports})
 	return nil
 }
 
-func (f *fakeAppDeps) RemoveCmd(name string) error {
+func (f *fakeAppDeps) RemoveService(name string) error {
 	for i, svc := range f.services {
 		if svc.Name == name {
 			f.services = append(f.services[:i], f.services[i+1:]...)
@@ -67,15 +67,15 @@ func (f *fakeAppDeps) RemoveCmd(name string) error {
 	return fmt.Errorf("service %q not found", name)
 }
 
-func (f *fakeAppDeps) StartCmd(string) error {
+func (f *fakeAppDeps) StartService(string) error {
 	return nil
 }
 
-func (f *fakeAppDeps) StopCmd(string) error {
+func (f *fakeAppDeps) StopService(string) error {
 	return nil
 }
 
-func (f *fakeAppDeps) RestartCmd(string) error {
+func (f *fakeAppDeps) RestartService(string) error {
 	return nil
 }
 

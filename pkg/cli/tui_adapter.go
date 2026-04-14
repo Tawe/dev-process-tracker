@@ -32,23 +32,23 @@ func (a tuiAdapter) ClearServicePID(name string) error {
 	return a.app.registry.ClearServicePID(name)
 }
 
-func (a tuiAdapter) AddCmd(name, cwd, command string, ports []int) error {
+func (a tuiAdapter) RegisterService(name, cwd, command string, ports []int) error {
 	return a.app.AddCmd(name, cwd, command, ports)
 }
 
-func (a tuiAdapter) RemoveCmd(name string) error {
+func (a tuiAdapter) RemoveService(name string) error {
 	return a.app.RemoveCmd(name)
 }
 
-func (a tuiAdapter) StartCmd(name string) error {
+func (a tuiAdapter) StartService(name string) error {
 	return a.app.StartCmd(name)
 }
 
-func (a tuiAdapter) StopCmd(identifier string) error {
+func (a tuiAdapter) StopService(identifier string) error {
 	return a.app.StopCmd(identifier)
 }
 
-func (a tuiAdapter) RestartCmd(name string) error {
+func (a tuiAdapter) RestartService(name string) error {
 	return a.app.RestartCmd(name)
 }
 

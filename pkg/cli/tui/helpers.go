@@ -377,7 +377,7 @@ func (m *topModel) handleEnterKey() (tea.Model, tea.Cmd) {
 	if m.focus == focusManaged {
 		managed := m.managedServices()
 		if m.managedSel >= 0 && m.managedSel < len(managed) {
-			if err := m.app.StartCmd(managed[m.managedSel].Name); err != nil {
+			if err := m.app.StartService(managed[m.managedSel].Name); err != nil {
 				m.cmdStatus = err.Error()
 			} else {
 				name := managed[m.managedSel].Name

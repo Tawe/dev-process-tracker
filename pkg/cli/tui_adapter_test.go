@@ -123,7 +123,7 @@ func TestTUIAdapterRestartCmd_SuppressesCLIProgressOutput(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected tuiAdapter type")
 	}
-	if err := adapter.RestartCmd("worker"); err != nil {
+	if err := adapter.RestartService("worker"); err != nil {
 		t.Fatalf("restart via TUI adapter: %v", err)
 	}
 

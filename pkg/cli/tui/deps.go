@@ -12,11 +12,11 @@ type AppDeps interface {
 	ListServices() []*models.ManagedService
 	GetService(name string) *models.ManagedService
 	ClearServicePID(name string) error
-	AddCmd(name, cwd, command string, ports []int) error
-	RemoveCmd(name string) error
-	StartCmd(name string) error
-	StopCmd(identifier string) error
-	RestartCmd(name string) error
+	RegisterService(name, cwd, command string, ports []int) error
+	RemoveService(name string) error
+	StartService(name string) error
+	StopService(identifier string) error
+	RestartService(name string) error
 	StopProcess(pid int, timeout time.Duration) error
 	TailServiceLogs(name string, lines int) ([]string, error)
 	TailProcessLogs(pid int, lines int) ([]string, error)

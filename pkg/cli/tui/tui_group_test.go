@@ -34,7 +34,7 @@ type mockStarter struct {
 	startFn func(name string) error
 }
 
-func (m *mockStarter) StartCmd(name string) error {
+func (m *mockStarter) StartService(name string) error {
 	if m.startFn != nil {
 		return m.startFn(name)
 	}
@@ -46,7 +46,7 @@ type mockRestarter struct {
 	restartFn func(name string) error
 }
 
-func (m *mockRestarter) RestartCmd(name string) error {
+func (m *mockRestarter) RestartService(name string) error {
 	if m.restartFn != nil {
 		return m.restartFn(name)
 	}
@@ -58,11 +58,11 @@ type mockRemover struct {
 	removeFn func(name string) error
 }
 
-func (m *mockRemover) RemoveCmd(name string) error {
+func (m *mockRemover) RemoveService(name string) error {
 	if m.removeFn != nil {
 		return m.removeFn(name)
 	}
-	return m.fakeAppDeps.RemoveCmd(name)
+	return m.fakeAppDeps.RemoveService(name)
 }
 
 // ---------------------------------------------------------------------------
