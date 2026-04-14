@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- Added namespace-based process grouping so related managed services can be controlled together
+- Added OSC 8 clickable hyperlinks to the TUI so service names and commands are directly actionable from the terminal
+- Added wildcard pattern support to the status command so multiple services can be queried at once
+- Added service metadata to the managed details pane so context like namespace and tags are visible alongside process info
+- Fixed namespace extraction so leading non-alphanumeric characters are handled correctly
+- Fixed ^C in command mode so it properly cancels without side effects and managed list/details scrolling is independent
+
 ## 0.3.0
 
 - Added a managed-services split view in the TUI so selection and navigation stay clear when browsing running and registered services
