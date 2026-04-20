@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -115,7 +114,7 @@ func (lk *FileLock) isOwnerAlive(lockPath string) bool {
 				return false
 			}
 			// Check if process is alive
-			return isProcessAlive(pid)
+			return lockProcessAlive(pid)
 		}
 	}
 	return true // Conservative: assume alive if we can't determine
@@ -125,15 +124,8 @@ func isProcessAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	// Use syscall.Kill(pid, 0) which is the standard Unix way to check
-	// if a process exists. Signal 0 doesn't actually send a signal but
-	// checks if the process is alive and accessible.
-	return syscallKill(pid, syscall.Signal(0)) == nil
+	return lockProcessAlive(pid)
 }
-
-// syscallKill sends signal 0 to check process liveness.
-// Extracted as a function for testability.
-var syscallKill = syscall.Kill
 
 // ErrLockBlocked is returned when a lock cannot be acquired.
 var ErrLockBlocked = fmt.Errorf("operation blocked: another operation is already in progress for this service")
