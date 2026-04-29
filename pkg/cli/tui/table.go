@@ -23,7 +23,6 @@ type processTable struct {
 	lastRunningHeight  int
 	lastManagedHeight  int
 	lastListWidth      int
-	lastDetailsWidth   int
 	lastRunningContent string
 	lastListContent    string
 	lastDetailsContent string
@@ -66,7 +65,6 @@ func (t *processTable) Render(m *topModel, width int) string {
 	t.lastRunningHeight = runningHeight
 	t.lastManagedHeight = managedHeight
 	t.lastListWidth = width / 2
-	t.lastDetailsWidth = width - width/2
 
 	t.runningVP.SetWidth(width)
 	t.runningVP.SetHeight(runningHeight)
@@ -249,40 +247,45 @@ func (m *topModel) renderRunningTable(width int, visible []*models.ServerInfo, d
 		cmdW = 12
 	}
 
-	nameHeader := headerStyle.Render(fixedCell(fmt.Sprintf("Name (%d)", len(visible)), nameW))
-	portHeader := headerStyle.Render(fixedCell("Port", portW))
-	pidHeader := headerStyle.Render(fixedCell("PID", pidW))
-	projectHeader := headerStyle.Render(fixedCell("Project", projectW))
-	commandHeader := headerStyle.Render(fixedCell("Command", cmdW))
-	healthHeader := headerStyle.Render(fixedCell("Health", healthW))
+	// Compute styles first based on sort state
+	nameStyle := headerStyle
+	portStyle := headerStyle
+	projectStyle := headerStyle
+	healthStyle := headerStyle
 
-	// Apply color based on sort state
 	switch m.sortBy {
 	case sortName:
 		if m.sortReverse {
-			nameHeader = orangeStyle.Render(fixedCell(fmt.Sprintf("Name (%d)", len(visible)), nameW))
+			nameStyle = orangeStyle
 		} else {
-			nameHeader = yellowStyle.Render(fixedCell(fmt.Sprintf("Name (%d)", len(visible)), nameW))
+			nameStyle = yellowStyle
 		}
 	case sortPort:
 		if m.sortReverse {
-			portHeader = orangeStyle.Render(fixedCell("Port", portW))
+			portStyle = orangeStyle
 		} else {
-			portHeader = yellowStyle.Render(fixedCell("Port", portW))
+			portStyle = yellowStyle
 		}
 	case sortProject:
 		if m.sortReverse {
-			projectHeader = orangeStyle.Render(fixedCell("Project", projectW))
+			projectStyle = orangeStyle
 		} else {
-			projectHeader = yellowStyle.Render(fixedCell("Project", projectW))
+			projectStyle = yellowStyle
 		}
 	case sortHealth:
 		if m.sortReverse {
-			healthHeader = orangeStyle.Render(fixedCell("Health", healthW))
+			healthStyle = orangeStyle
 		} else {
-			healthHeader = yellowStyle.Render(fixedCell("Health", healthW))
+			healthStyle = yellowStyle
 		}
 	}
+
+	nameHeader := nameStyle.Render(fixedCell(fmt.Sprintf("Name (%d)", len(visible)), nameW))
+	portHeader := portStyle.Render(fixedCell("Port", portW))
+	pidHeader := headerStyle.Render(fixedCell("PID", pidW))
+	projectHeader := projectStyle.Render(fixedCell("Project", projectW))
+	commandHeader := headerStyle.Render(fixedCell("Command", cmdW))
+	healthHeader := healthStyle.Render(fixedCell("Health", healthW))
 
 	header := fmt.Sprintf("%s%s%s%s%s%s%s%s%s%s%s",
 		nameHeader, pad(sep),
@@ -339,23 +342,15 @@ func (m *topModel) renderRunningTable(width int, visible []*models.ServerInfo, d
 
 		line := fmt.Sprintf("%s%s%s%s%s%s%s%s%s%s%s",
 			fixedCell(displayNames[i], nameW), pad(sep),
-			fixedCell(port, portW), pad(sep),
+			portCell(port, portW), pad(sep),
 			fixedCell(fmt.Sprintf("%d", pid), pidW), pad(sep),
 			fixedCell(project, projectW), pad(sep),
 			fixedCell(truncatedCmd, cmdW), pad(sep),
 			fixedCell(icon, healthW),
 		)
-		lines = append(lines, fitLine(line, width))
-	}
-
-	// Inject OSC 8 hyperlinks into port cells after fitLine (width calc done).
-	for i, srv := range visible {
-		if srv.ProcessRecord != nil && srv.ProcessRecord.Port > 0 {
-			port := fmt.Sprintf("%d", srv.ProcessRecord.Port)
-			old := fixedCell(port, portW)
-			linked := osc8Link(port, "http://localhost:"+port) + strings.Repeat(" ", portW-len(port))
-			lines[rowIndices[i]] = strings.Replace(lines[rowIndices[i]], old, linked, 1)
-		}
+		// Use fitAnsiLine because portCell may contain OSC8 hyperlinks
+		// (runewidth.StringWidth in fitLine doesn't understand escape sequences)
+		lines = append(lines, fitAnsiLine(line, width))
 	}
 
 	// Apply visual group selection highlight when group toggle is active (before selection highlight)
@@ -405,9 +400,6 @@ func (m *topModel) renderManagedHeader(width int, managed []*models.ManagedServi
 	header := text + strings.Repeat("─", fillW)
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render(fitLine(header, width))
 }
-
-// renderManagedSection is no longer used — list and details are rendered into
-// independent viewports (managedListVP, managedDetailsVP) in Render().
 
 func (m *topModel) renderManagedList(width int, managed []*models.ManagedService) string {
 	if len(managed) == 0 {

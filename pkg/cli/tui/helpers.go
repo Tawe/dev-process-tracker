@@ -407,14 +407,17 @@ func (m *topModel) handleEnterKey() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// mouseCoordOffset compensates for Bubble Tea's mouse coordinate system,
+// which reports row coordinates one line below our internal table math.
+const mouseCoordOffset = 1
+
 func (m *topModel) handleTableMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	visible := m.visibleServers()
 	managed := m.managedServices()
 	mouse := msg.Mouse()
 
 	headerOffset := m.tableTopLines(m.width)
-	// Bubble Tea mouse row coordinates are effectively one line below our table math.
-	viewportY := mouse.Y - headerOffset + 1
+	viewportY := mouse.Y - headerOffset + mouseCoordOffset
 	if viewportY < 0 {
 		return m, nil
 	}
