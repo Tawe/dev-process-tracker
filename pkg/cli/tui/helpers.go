@@ -470,7 +470,14 @@ func (m *topModel) handleTableMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) 
 	}
 
 	managedViewportY := viewportY - m.table.lastRunningHeight - 1
-	if managedViewportY < 0 || managedViewportY >= m.table.lastManagedHeight {
+
+	switch m.table.managedClickRegion(managedViewportY, mouse.X) {
+	case managedRegionDetails:
+		// Details pane is view-only; consume the click without changing selection.
+		return m, nil
+	case managedRegionList:
+		// fall through to list selection below
+	default:
 		return m, nil
 	}
 

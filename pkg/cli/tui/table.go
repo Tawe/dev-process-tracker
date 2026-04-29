@@ -576,6 +576,26 @@ func (t *processTable) updateViewportForTableY(viewportY int, viewportX int, msg
 	return nil
 }
 
+// managedClickRegion reports which managed sub-region a click falls in.
+// It mirrors the X-based routing in updateViewportForTableY.
+type managedRegion int
+
+const (
+	managedRegionList    managedRegion = iota // left pane: selectable items
+	managedRegionDetails                         // right pane: read-only details
+	managedRegionOutside                         // header separator or outside managed area
+)
+
+func (t *processTable) managedClickRegion(managedViewportY, clickX int) managedRegion {
+	if managedViewportY < 0 || managedViewportY >= t.lastManagedHeight {
+		return managedRegionOutside
+	}
+	if clickX < t.lastListWidth {
+		return managedRegionList
+	}
+	return managedRegionDetails
+}
+
 func (t *processTable) runningYOffset() int {
 	return t.runningVP.YOffset()
 }
