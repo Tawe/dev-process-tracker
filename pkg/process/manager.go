@@ -158,11 +158,6 @@ func (m *Manager) createLogFile(serviceName string) (*os.File, error) {
 	return os.Create(logPath)
 }
 
-// GetLogs retrieves recent logs for a service
-func (m *Manager) GetLogs(serviceName string, lines int) ([]string, error) {
-	return m.Tail(serviceName, lines)
-}
-
 // LatestLogPath returns the most recent log file path for a service.
 func (m *Manager) LatestLogPath(serviceName string) (string, error) {
 	serviceLogDir := filepath.Join(m.logsDir, serviceName)
@@ -194,29 +189,7 @@ func (m *Manager) Tail(serviceName string, lines int) ([]string, error) {
 		return nil, err
 	}
 
-	file, err := os.Open(logPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open log file: %w", err)
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	buf := make([]byte, 0, 1024*1024)
-	scanner.Buffer(buf, 1024*1024)
-
-	linesBuf := make([]string, 0, lines)
-	for scanner.Scan() {
-		if len(linesBuf) < lines {
-			linesBuf = append(linesBuf, scanner.Text())
-		} else {
-			copy(linesBuf, linesBuf[1:])
-			linesBuf[len(linesBuf)-1] = scanner.Text()
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("failed to read log file: %w", err)
-	}
-	return linesBuf, nil
+	return m.tailFile(logPath, lines)
 }
 
 // TailProcess tries to retrieve logs for a non-managed process.

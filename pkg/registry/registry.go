@@ -66,31 +66,6 @@ func (r *Registry) Load() error {
 	return nil
 }
 
-// Save writes the registry to disk
-func (r *Registry) Save() error {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	// Ensure directory exists
-	dir := filepath.Dir(r.filePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create registry directory: %w", err)
-	}
-
-	// Marshal to JSON
-	content, err := json.MarshalIndent(r.data, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal registry: %w", err)
-	}
-
-	// Write file with mode 0644
-	if err := os.WriteFile(r.filePath, content, 0644); err != nil {
-		return fmt.Errorf("failed to write registry file: %w", err)
-	}
-
-	return nil
-}
-
 // AddService registers a new managed service
 func (r *Registry) AddService(service *models.ManagedService) error {
 	r.mu.Lock()

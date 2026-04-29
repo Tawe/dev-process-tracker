@@ -414,8 +414,3 @@ func (ps *ProcessScanner) getCWD(pid int) (string, bool) {
 	}
 	return cwd, true
 }
-
-// DetectFrameworkInfo detects the framework and language of a process
-func (ps *ProcessScanner) DetectFrameworkInfo(pid int, command string, cwd string) *FrameworkInfo {
-	return DetectFramework(pid, command, cwd)
-}

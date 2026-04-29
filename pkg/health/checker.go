@@ -106,11 +106,11 @@ func (c *Checker) checkTCP(port int) (bool, int) {
 
 // categorizeResponse categorizes response time into status
 func categorizeResponse(ms int) HealthStatus {
-	if ms > 2000 {
-		return HealthSlow
-	}
 	if ms > 5000 {
 		return HealthTimeout
+	}
+	if ms > 2000 {
+		return HealthSlow
 	}
 	return HealthOK
 }

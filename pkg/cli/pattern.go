@@ -2,6 +2,7 @@ package cli
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/devports/devpt/pkg/models"
@@ -62,14 +63,7 @@ func expandPattern(pattern string, serviceNames map[string]bool) []string {
 	}
 
 	// Sort matches for consistent ordering
-	// Use simple bubble sort for small lists (most registries have < 100 services)
-	for i := 0; i < len(matches)-1; i++ {
-		for j := i + 1; j < len(matches); j++ {
-			if matches[i] > matches[j] {
-				matches[i], matches[j] = matches[j], matches[i]
-			}
-		}
-	}
+	sort.Strings(matches)
 
 	return matches
 }
