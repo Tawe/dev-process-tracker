@@ -1,407 +1,170 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
-	"text/tabwriter"
-
 	"github.com/devports/devpt/pkg/health"
+	"github.com/devports/devpt/pkg/lifecycle"
 	"github.com/devports/devpt/pkg/models"
 	"github.com/devports/devpt/pkg/process"
 )
 
-// ListCmd handles the 'ls' command
 func (a *App) ListCmd(detailed bool) error {
 	servers, err := a.discoverServers()
-	if err != nil {
-		return err
-	}
-
-	return a.printServerTable(servers, detailed)
+	if err != nil { return err }
+	return PrintServerTable(a.outWriter(), servers, detailed)
 }
-
-// printServerTable prints servers in tabular format
-func (a *App) printServerTable(servers []*models.ServerInfo, detailed bool) error {
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-
-	if detailed {
-		fmt.Fprintln(w, "Name\tPort\tPID\tProject\tCommand\tSource\tStatus")
-		for _, srv := range servers {
-			fmt.Fprintln(w, a.formatServerRow(srv, true))
-		}
-	} else {
-		fmt.Fprintln(w, "Name\tPort\tPID\tProject\tSource\tStatus")
-		for _, srv := range servers {
-			fmt.Fprintln(w, a.formatServerRow(srv, false))
-		}
-	}
-
-	return w.Flush()
-}
-
-// formatServerRow formats a server as a table row
-func (a *App) formatServerRow(srv *models.ServerInfo, detailed bool) string {
-	name := "-"
-	port := "-"
-	pid := "-"
-	project := "-"
-	command := "-"
-	source := string(srv.Source)
-	status := srv.Status
-
-	if srv.ManagedService != nil {
-		name = srv.ManagedService.Name
-		if len(srv.ManagedService.Ports) > 0 {
-			port = fmt.Sprintf("%d", srv.ManagedService.Ports[0])
-		}
-		command = srv.ManagedService.Command
-	}
-
-	if srv.ProcessRecord != nil {
-		pid = fmt.Sprintf("%d", srv.ProcessRecord.PID)
-		port = fmt.Sprintf("%d", srv.ProcessRecord.Port)
-		project = srv.ProcessRecord.ProjectRoot
-		if command == "-" {
-			command = srv.ProcessRecord.Command
-		}
-
-		// Determine source
-		if srv.ProcessRecord.AgentTag != nil {
-			source = fmt.Sprintf("%s:%s", srv.ProcessRecord.AgentTag.Source, srv.ProcessRecord.AgentTag.AgentName)
-		} else {
-			source = string(models.SourceManual)
-		}
-	}
-
-	if detailed {
-		return fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s", name, port, pid, project, command, source, status)
-	}
-
-	return fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s", name, port, pid, project, source, status)
-}
-
-// AddCmd registers a new managed service
 func (a *App) AddCmd(name, cwd, command string, ports []int) error {
-	if err := validateManagedCommand(command); err != nil {
-		return err
-	}
-
-	svc := &models.ManagedService{
-		Name:    name,
-		CWD:     cwd,
-		Command: command,
-		Ports:   ports,
-	}
-
-	if err := a.registry.AddService(svc); err != nil {
-		return err
-	}
-
-	fmt.Printf("Service %q registered successfully\n", name)
+	if err := validateManagedCommand(command); err != nil { return err }
+	svc := &models.ManagedService{Name: name, CWD: cwd, Command: command, Ports: ports}
+	if err := a.registry.AddService(svc); err != nil { return err }
+	fmt.Fprintf(a.outWriter(), "Service %q registered successfully\n", name)
 	return nil
 }
+func (a *App) RemoveCmd(name string) error { return a.registry.RemoveService(name) }
 
-// RemoveCmd removes a managed service
-func (a *App) RemoveCmd(name string) error {
-	return a.registry.RemoveService(name)
+// lifecycleManager returns a lifecycle.LifecycleManager wired to the App's dependencies.
+func (a *App) lifecycleManager() *lifecycle.LifecycleManager {
+	return lifecycle.NewLifecycleManager(&appDeps{app: a})
 }
 
-// StartCmd starts a managed service
 func (a *App) StartCmd(name string) error {
-	svc := a.registry.GetService(name)
-	if svc == nil {
-		return fmt.Errorf("service %q not found", name)
-	}
+	svc, errs := LookupServiceWithFallback(name, a.registry.ListServices())
+	if svc == nil { return fmt.Errorf("service %q not found: %s", name, strings.Join(errs, "; ")) }
 
-	fmt.Printf("Starting service %q...\n", name)
-	pid, err := a.processManager.Start(svc)
-	if err != nil {
-		return fmt.Errorf("failed to start service: %w", err)
-	}
+	mgr := a.lifecycleManager()
+	result := mgr.Start(svc)
 
-	// Update registry with new PID
-	if err := a.registry.UpdateServicePID(name, pid); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to update registry: %v\n", err)
-	}
+	fmt.Fprintln(a.outWriter(), result.Message)
 
-	fmt.Printf("Service %q started with PID %d\n", name, pid)
+	if result.Outcome == lifecycle.OutcomeFailed || result.Outcome == lifecycle.OutcomeInvalid || result.Outcome == lifecycle.OutcomeBlocked {
+		return fmt.Errorf("%s", result.Message)
+	}
 	return nil
 }
 
-// StopCmd stops a service by name or port
 func (a *App) StopCmd(identifier string) error {
+	// Try to resolve as a managed service first
+	if svc, _ := LookupServiceWithFallback(identifier, a.registry.ListServices()); svc != nil {
+		mgr := a.lifecycleManager()
+		result := mgr.Stop(svc)
+
+		fmt.Fprintln(a.outWriter(), result.Message)
+
+		if result.Outcome == lifecycle.OutcomeFailed || result.Outcome == lifecycle.OutcomeInvalid || result.Outcome == lifecycle.OutcomeBlocked {
+			return fmt.Errorf("%s", result.Message)
+		}
+		return nil
+	}
+
+	// Fall back to raw PID stop by port (for unmanaged/manual processes)
+	port, err := strconv.Atoi(identifier)
+	if err != nil { return fmt.Errorf("invalid service name or port: %s", identifier) }
+
+	servers, err := a.discoverServers()
+	if err != nil { return err }
+
 	var targetPID int
-	targetServiceName := ""
-
-	// Check if identifier is a service name
-	if svc := a.registry.GetService(identifier); svc != nil {
-		targetServiceName = svc.Name
-		servers, err := a.discoverServers()
-		if err != nil {
-			return err
-		}
-		targetPID = managedServicePID(servers, svc.Name)
-		if targetPID == 0 && svc.LastPID != nil && *svc.LastPID > 0 && a.processManager.IsRunning(*svc.LastPID) {
-			return fmt.Errorf("cannot safely determine PID for service %q; stored PID is no longer validated against a live managed process", identifier)
-		}
-	} else {
-		// Try parsing as port number
-		port, err := strconv.Atoi(identifier)
-		if err != nil {
-			return fmt.Errorf("invalid service name or port: %s", identifier)
-		}
-
-		// Find process by port
-		servers, err := a.discoverServers()
-		if err != nil {
-			return err
-		}
-
-		for _, srv := range servers {
-			if srv.ProcessRecord != nil && srv.ProcessRecord.Port == port {
-				targetPID = srv.ProcessRecord.PID
-				if srv.ManagedService != nil {
-					targetServiceName = srv.ManagedService.Name
-				}
-				break
-			}
-		}
-
-		if targetPID == 0 {
-			return fmt.Errorf("no process found on port %d", port)
+	for _, srv := range servers {
+		if srv.ProcessRecord != nil && srv.ProcessRecord.Port == port {
+			targetPID = srv.ProcessRecord.PID
+			break
 		}
 	}
+	if targetPID == 0 { return fmt.Errorf("no process found on port %d", port) }
 
-	if targetPID == 0 {
-		return fmt.Errorf("cannot determine PID to stop")
-	}
-
-	// Stop the process
-	fmt.Printf("Stopping PID %d...\n", targetPID)
-	if err := a.processManager.Stop(targetPID, 5000000000); err != nil { // 5 second timeout
-		if errors.Is(err, process.ErrNeedSudo) {
-			return fmt.Errorf("requires sudo to terminate PID %d", targetPID)
-		}
-		if isProcessFinishedErr(err) {
-			if targetServiceName != "" {
-				if clrErr := a.registry.ClearServicePID(targetServiceName); clrErr != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to clear PID for %q: %v\n", targetServiceName, clrErr)
-				}
-			}
-			return nil
-		}
-		return fmt.Errorf("failed to stop process: %w", err)
-	}
-
-	fmt.Printf("Process %d stopped\n", targetPID)
-	if targetServiceName != "" {
-		if err := a.registry.ClearServicePID(targetServiceName); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to clear PID for %q: %v\n", targetServiceName, err)
-		}
-	}
-	return nil
+	fmt.Fprintf(a.outWriter(), "Stopping PID %d...\n", targetPID)
+	result := StopProcess(a.processManager, targetPID, defaultStopTimeout)
+	if result.SudoRequired { return fmt.Errorf("requires sudo to terminate PID %d", targetPID) }
+	if result.AlreadyDead { return nil }
+	if result.Stopped { fmt.Fprintf(a.outWriter(), "Process %d stopped\n", targetPID); return nil }
+	if result.ClearError != nil { return result.ClearError }
+	return fmt.Errorf("failed to stop process PID %d", targetPID)
 }
 
-// RestartCmd restarts a managed service
 func (a *App) RestartCmd(name string) error {
-	svc := a.registry.GetService(name)
-	if svc == nil {
-		return fmt.Errorf("service %q not found", name)
-	}
+	svc, errs := LookupServiceWithFallback(name, a.registry.ListServices())
+	if svc == nil { return fmt.Errorf("service %q not found: %s", name, strings.Join(errs, "; ")) }
 
-	// Stop if running
-	if pid, err := a.validatedManagedPID(svc); err != nil {
-		return err
-	} else if pid > 0 {
-		fmt.Printf("Stopping service %q...\n", name)
-		if err := a.processManager.Stop(pid, 5000000000); err != nil { // 5 second timeout
-			fmt.Fprintf(os.Stderr, "Warning: failed to stop service: %v\n", err)
-		}
-	}
+	mgr := a.lifecycleManager()
+	result := mgr.Restart(svc)
 
-	// Start
-	fmt.Printf("Starting service %q...\n", name)
-	pid, err := a.processManager.Start(svc)
-	if err != nil {
-		return fmt.Errorf("failed to start service: %w", err)
-	}
+	fmt.Fprintln(a.outWriter(), result.Message)
 
-	// Update registry
-	if err := a.registry.UpdateServicePID(name, pid); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to update registry: %v\n", err)
+	if result.Outcome == lifecycle.OutcomeFailed || result.Outcome == lifecycle.OutcomeInvalid || result.Outcome == lifecycle.OutcomeBlocked {
+		return fmt.Errorf("%s", result.Message)
 	}
-
-	fmt.Printf("Service %q restarted with PID %d\n", name, pid)
 	return nil
 }
 
-// LogsCmd displays recent logs for a service
+func (a *App) BatchStartCmd(names []string) error {
+	mgr := a.lifecycleManager()
+	summary := RunLifecycleBatch(names, mgr.Start, a.registry)
+	fmt.Fprint(a.outWriter(), FormatBatchSummary(summary))
+	if summary.Failed > 0 || summary.Invalid > 0 || summary.NotFound > 0 {
+		return fmt.Errorf("batch start completed with %d failure(s)", summary.Failed+summary.Invalid+summary.NotFound)
+	}
+	return nil
+}
+
+func (a *App) BatchStopCmd(names []string) error {
+	mgr := a.lifecycleManager()
+	summary := RunLifecycleBatch(names, mgr.Stop, a.registry)
+	fmt.Fprint(a.outWriter(), FormatBatchSummary(summary))
+	if summary.Failed > 0 || summary.Invalid > 0 || summary.NotFound > 0 {
+		return fmt.Errorf("batch stop completed with %d failure(s)", summary.Failed+summary.Invalid+summary.NotFound)
+	}
+	return nil
+}
+
+func (a *App) BatchRestartCmd(names []string) error {
+	mgr := a.lifecycleManager()
+	summary := RunLifecycleBatch(names, mgr.Restart, a.registry)
+	fmt.Fprint(a.outWriter(), FormatBatchSummary(summary))
+	if summary.Failed > 0 || summary.Invalid > 0 || summary.NotFound > 0 {
+		return fmt.Errorf("batch restart completed with %d failure(s)", summary.Failed+summary.Invalid+summary.NotFound)
+	}
+	return nil
+}
+
 func (a *App) LogsCmd(name string, lines int) error {
-	svc := a.registry.GetService(name)
-	if svc == nil {
-		return fmt.Errorf("service %q not found", name)
-	}
-
+	svc, errs := LookupServiceWithFallback(name, a.registry.ListServices())
+	if svc == nil { return fmt.Errorf("service %q not found: %s", name, strings.Join(errs, "; ")) }
 	logLines, err := a.processManager.Tail(svc.Name, lines)
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("Logs for service %q:\n", name)
-	for _, line := range logLines {
-		fmt.Println(line)
-	}
-
+	if err != nil { return err }
+	fmt.Printf("Logs for service %q:\n", svc.Name)
+	for _, line := range logLines { fmt.Println(line) }
 	return nil
 }
-
-func isProcessFinishedErr(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "process already finished") || strings.Contains(msg, "no such process")
-}
-
-func managedServicePID(servers []*models.ServerInfo, serviceName string) int {
-	for _, srv := range servers {
-		if srv == nil || srv.ManagedService == nil || srv.ProcessRecord == nil {
-			continue
-		}
-		if srv.ManagedService.Name == serviceName {
-			return srv.ProcessRecord.PID
-		}
-	}
-	return 0
-}
-
-func (a *App) validatedManagedPID(svc *models.ManagedService) (int, error) {
-	if svc == nil {
-		return 0, nil
-	}
+func (a *App) StatusCmd(identifiers []string) error {
 	servers, err := a.discoverServers()
-	if err != nil {
-		return 0, err
-	}
-	pid := managedServicePID(servers, svc.Name)
-	if pid != 0 {
-		return pid, nil
-	}
-	if svc.LastPID != nil && *svc.LastPID > 0 && a.processManager.IsRunning(*svc.LastPID) {
-		return 0, fmt.Errorf("cannot safely determine PID for service %q; stored PID is no longer validated against a live managed process", svc.Name)
-	}
-	return 0, nil
-}
-
-// StatusCmd shows detailed info for a specific server
-func (a *App) StatusCmd(identifier string) error {
-	servers, err := a.discoverServers()
-	if err != nil {
-		return err
-	}
-
-	var target *models.ServerInfo
-
-	// Find by name or port
-	for _, srv := range servers {
-		if srv.ManagedService != nil && srv.ManagedService.Name == identifier {
-			target = srv
-			break
-		}
-		if srv.ProcessRecord != nil && fmt.Sprintf("%d", srv.ProcessRecord.Port) == identifier {
-			target = srv
-			break
-		}
-	}
-
-	if target == nil {
-		return fmt.Errorf("server %q not found", identifier)
-	}
-
-	return a.printServerStatus(target)
-}
-
-// printServerStatus prints detailed status for a server
-func (a *App) printServerStatus(srv *models.ServerInfo) error {
-	line := "============================================================"
-	fmt.Println("\n" + line)
-	fmt.Println("SERVER DETAILS")
-	fmt.Println(line)
-
-	if srv.ManagedService != nil {
-		fmt.Printf("Name:    %s\n", srv.ManagedService.Name)
-		fmt.Printf("Command: %s\n", srv.ManagedService.Command)
-		fmt.Printf("CWD:     %s\n", srv.ManagedService.CWD)
-		fmt.Printf("Ports:   ")
-		for i, p := range srv.ManagedService.Ports {
-			if i > 0 {
-				fmt.Print(", ")
-			}
-			fmt.Printf("%d", p)
-		}
-		fmt.Println()
-	}
-
-	if srv.ProcessRecord != nil {
-		fmt.Printf("\nPort:    %d\n", srv.ProcessRecord.Port)
-		fmt.Printf("PID:     %d\n", srv.ProcessRecord.PID)
-		fmt.Printf("PPID:    %d\n", srv.ProcessRecord.PPID)
-		fmt.Printf("User:    %s\n", srv.ProcessRecord.User)
-		fmt.Printf("Command: %s\n", srv.ProcessRecord.Command)
-		fmt.Printf("CWD:     %s\n", srv.ProcessRecord.CWD)
-		if srv.ProcessRecord.ProjectRoot != "" {
-			fmt.Printf("Project: %s\n", srv.ProcessRecord.ProjectRoot)
-		}
-
-		// Health check
-		dashes := "------------------------------------------------------------"
-		fmt.Println("\n" + dashes)
-		fmt.Println("HEALTH STATUS")
-		fmt.Println(dashes)
-		check := a.healthChecker.Check(srv.ProcessRecord.Port)
-		icon := health.StatusIcon(check.Status)
-		fmt.Printf("Status:   %s %s\n", icon, check.Status)
-		fmt.Printf("Response: %dms\n", check.ResponseMs)
-		fmt.Printf("Message:  %s\n", check.Message)
-
-		// Agent detection
-		if srv.ProcessRecord.AgentTag != nil {
-			fmt.Println("\n" + dashes)
-			fmt.Println("AI AGENT DETECTION")
-			fmt.Println(dashes)
-			fmt.Printf("Source:     %s\n", srv.ProcessRecord.AgentTag.Source)
-			fmt.Printf("Agent:      %s\n", srv.ProcessRecord.AgentTag.AgentName)
-			fmt.Printf("Confidence: %s\n", srv.ProcessRecord.AgentTag.Confidence)
-		}
-	}
-
-	if srv.Status == "crashed" {
-		dashes := "------------------------------------------------------------"
-		fmt.Println("\n" + dashes)
-		fmt.Println("CRASH DETAILS")
-		fmt.Println(dashes)
-		if srv.CrashReason != "" {
-			fmt.Printf("Reason: %s\n", srv.CrashReason)
-		} else {
-			fmt.Println("Reason: unavailable")
-		}
-		if len(srv.CrashLogTail) > 0 {
-			fmt.Println("Recent logs:")
-			for _, line := range srv.CrashLogTail {
-				if strings.TrimSpace(line) == "" {
-					continue
+	if err != nil { return err }
+	allServices := a.registry.ListServices()
+	var matched []*models.ServerInfo
+	for _, id := range identifiers {
+		if strings.Contains(id, "*") {
+			for _, name := range ExpandPatterns([]string{id}, allServices) {
+				for _, srv := range servers {
+					if srv.ManagedService != nil && srv.ManagedService.Name == name {
+						matched = append(matched, srv); break
+					}
 				}
-				fmt.Printf("  %s\n", line)
+			}
+		} else {
+			for _, srv := range servers {
+				if srv.ManagedService != nil && srv.ManagedService.Name == id { matched = append(matched, srv); break }
+				if srv.ProcessRecord != nil && fmt.Sprintf("%d", srv.ProcessRecord.Port) == id { matched = append(matched, srv); break }
 			}
 		}
 	}
-
-	fmt.Printf("\nStatus:   %s\n", srv.Status)
-	fmt.Printf("Source:   %s\n", srv.Source)
-	fmt.Println(line + "\n")
-
+	if len(matched) == 0 { return fmt.Errorf("no servers found matching %s", strings.Join(identifiers, ", ")) }
+	for _, srv := range matched {
+		var hc *health.HealthCheck
+		if srv.ProcessRecord != nil { hc = a.healthChecker.Check(srv.ProcessRecord.Port) }
+		if err := PrintServerStatus(a.outWriter(), srv, hc); err != nil { return err }
+	}
 	return nil
 }
+
+var _ = process.ErrNeedSudo
