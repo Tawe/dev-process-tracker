@@ -89,6 +89,9 @@ func isAmbiguousWithResolver(
 	rootCount := make(map[string]int)
 	portCount := make(map[int]int)
 
+	// portOwner maps a uniquely-declared port to the service that owns it.
+	portOwner := make(map[int]*models.ManagedService)
+
 	resolve := resolver
 	if resolve == nil {
 		resolve = func(cwd string) string { return cwd }
@@ -108,6 +111,7 @@ func isAmbiguousWithResolver(
 		}
 		for _, p := range s.Ports {
 			portCount[p]++
+			portOwner[p] = s
 		}
 	}
 
@@ -118,6 +122,14 @@ func isAmbiguousWithResolver(
 		}
 		procCWD := normalizePath(proc.CWD)
 		procRoot := normalizePath(proc.ProjectRoot)
+
+		// If this process is uniquely claimed by another service via port,
+		// it cannot create ambiguity for the current service.
+		if proc.Port > 0 && portCount[proc.Port] == 1 {
+			if owner, ok := portOwner[proc.Port]; ok && owner != svc {
+				continue
+			}
+		}
 
 		// CWD match but not unique
 		if svcCWD != "" && procCWD == svcCWD && cwdCount[svcCWD] > 1 {
