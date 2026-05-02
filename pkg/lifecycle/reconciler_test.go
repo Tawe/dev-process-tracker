@@ -142,6 +142,59 @@ func TestReconcile_ClearsStaleMetadata(t *testing.T) {
 	}
 }
 
+func TestReconcile_Ambiguous_SkippedWhenPortUniquelyOwned(t *testing.T) {
+	t.Parallel()
+
+	svc1 := &models.ManagedService{
+		Name:  "api",
+		CWD:   "/shared",
+		Ports: []int{3000},
+	}
+	svc2 := &models.ManagedService{
+		Name:  "worker",
+		CWD:   "/shared",
+		Ports: []int{4000},
+	}
+	// Process is on port 4000, uniquely owned by worker.
+	// It should NOT cause ambiguity for api.
+	proc := &models.ProcessRecord{
+		PID:  1234,
+		CWD:  "/shared",
+		Port: 4000,
+	}
+
+	result := Reconcile(svc1, []*models.ProcessRecord{proc}, []*models.ManagedService{svc1, svc2})
+	if result.Status == "unknown" {
+		t.Errorf("expected status != unknown when process port is uniquely owned by another service, got %q", result.Status)
+	}
+}
+
+func TestReconcile_Ambiguous_WhenPortShared(t *testing.T) {
+	t.Parallel()
+
+	svc1 := &models.ManagedService{
+		Name:  "api",
+		CWD:   "/shared",
+		Ports: []int{3000},
+	}
+	svc2 := &models.ManagedService{
+		Name:  "worker",
+		CWD:   "/shared",
+		Ports: []int{3000},
+	}
+	// Port 3000 declared by both services, CWD also shared → ambiguous.
+	proc := &models.ProcessRecord{
+		PID:  1234,
+		CWD:  "/shared",
+		Port: 3000,
+	}
+
+	result := Reconcile(svc1, []*models.ProcessRecord{proc}, []*models.ManagedService{svc1, svc2})
+	if result.Status != "unknown" {
+		t.Errorf("expected status unknown when port is shared and CWD matches both services, got %q", result.Status)
+	}
+}
+
 func TestReconcile_PIDReuse_Unknown(t *testing.T) {
 	t.Parallel()
 
