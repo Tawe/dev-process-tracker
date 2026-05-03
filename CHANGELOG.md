@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.2
+
+- Fixed port-bound readiness timeout so services like Open WebUI that take 10–15s to bind their port are no longer falsely marked unhealthy
+- Fixed false ambiguity warnings so processes already uniquely claimed by another service via their port binding are skipped
+- Fixed managed details pane click routing so clicking the right-side details pane no longer selects items in the left-side service list
+- Fixed Windows cross-compilation so the lock file compiles without missing `syscall.Kill`
+- Refactored package internals to remove ~330 lines of dead code, unreachable paths, and duplicated logic
+
 ## 0.4.1
 
 - Fixed Linux crash when running as non-root by adding /proc/net/tcp fallback so lsof is no longer required
