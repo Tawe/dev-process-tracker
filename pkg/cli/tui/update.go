@@ -235,6 +235,9 @@ func (m *topModel) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Restart):
 		if m.groupHighlightNamespace != nil {
 			m.prepareGroupRestartConfirm()
+		} else if m.focus == focusManaged {
+			m.cmdStatus = m.restartManaged()
+			m.refresh()
 		} else {
 			m.cmdStatus = m.restartSelected()
 			m.refresh()
@@ -243,6 +246,8 @@ func (m *topModel) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Stop):
 		if m.groupHighlightNamespace != nil {
 			m.prepareGroupStopConfirm()
+		} else if m.focus == focusManaged {
+			m.prepareManagedStopConfirm()
 		} else {
 			m.prepareStopConfirm()
 		}

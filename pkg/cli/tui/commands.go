@@ -251,6 +251,35 @@ func (m topModel) restartSelected() string {
 	return fmt.Sprintf("Restarted %q", srv.ManagedService.Name)
 }
 
+func (m *topModel) restartManaged() string {
+	managed := m.managedServices()
+	if m.managedSel < 0 || m.managedSel >= len(managed) {
+		return "No managed service selected"
+	}
+	name := managed[m.managedSel].Name
+	if err := m.app.RestartService(name); err != nil {
+		return err.Error()
+	}
+	m.starting[name] = time.Now()
+	return fmt.Sprintf("Restarted %q", name)
+}
+
+func (m *topModel) prepareManagedStopConfirm() {
+	managed := m.managedServices()
+	if m.managedSel < 0 || m.managedSel >= len(managed) {
+		m.cmdStatus = "No managed service selected"
+		return
+	}
+	svc := managed[m.managedSel]
+	if svc.LastPID != nil && *svc.LastPID != 0 {
+		prompt := fmt.Sprintf("Stop %q (PID %d)?", svc.Name, *svc.LastPID)
+		m.openConfirmModal(&confirmState{kind: confirmStopPID, prompt: prompt, pid: *svc.LastPID, serviceName: svc.Name})
+	} else {
+		prompt := fmt.Sprintf("Stop %q?", svc.Name)
+		m.openConfirmModal(&confirmState{kind: confirmStopPID, prompt: prompt, serviceName: svc.Name})
+	}
+}
+
 func (m *topModel) prepareStopConfirm() {
 	visible := m.visibleServers()
 	if m.selected < 0 || m.selected >= len(visible) {

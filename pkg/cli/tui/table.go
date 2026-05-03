@@ -371,10 +371,27 @@ func (m *topModel) renderRunningTable(width int, visible []*models.ServerInfo, d
 	if m.selected >= 0 && m.selected < len(visible) {
 		idx := rowIndices[m.selected]
 		bg := "8"
+		fg := "15"
 		if m.focus == focusRunning {
 			bg = "57"
 		}
-		lines[idx] = lipgloss.NewStyle().Background(lipgloss.Color(bg)).Foreground(lipgloss.Color("15")).Render(lines[idx])
+		// Override with amber when confirm dialog targets this row
+		if m.activeModalKind() == modalConfirm {
+			if ct := m.confirmTargetName(); ct != "" {
+				selName := m.serviceNameFor(visible[m.selected])
+				if selName == ct {
+					bg = "178"
+					fg = "0"
+				}
+			}
+			if m.confirm != nil && m.confirm.kind == confirmStopPID && m.confirm.pid != 0 {
+				if visible[m.selected].ProcessRecord != nil && visible[m.selected].ProcessRecord.PID == m.confirm.pid {
+					bg = "178"
+					fg = "0"
+				}
+			}
+		}
+		lines[idx] = lipgloss.NewStyle().Background(lipgloss.Color(bg)).Foreground(lipgloss.Color(fg)).Render(lines[idx])
 	}
 
 	out := strings.Join(lines, "\n")
@@ -443,7 +460,11 @@ func (m *topModel) renderManagedList(width int, managed []*models.ManagedService
 		// Determine background for this row
 		var rowBg string
 		var rowFg string
+		confirmTarget := m.confirmTargetName()
 		switch {
+		case confirmTarget == svc.Name && m.activeModalKind() == modalConfirm:
+			rowBg = "178"
+			rowFg = "0"
 		case i == m.managedSel && m.focus == focusManaged:
 			rowBg = "57"
 			rowFg = "15"

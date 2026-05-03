@@ -288,6 +288,20 @@ func (m topModel) selectedManagedService() *models.ManagedService {
 	return managed[m.managedSel]
 }
 
+// confirmTargetName returns the service name targeted by the active confirm dialog, if any.
+func (m *topModel) confirmTargetName() string {
+	if m.confirm == nil {
+		return ""
+	}
+	if m.confirm.serviceName != "" {
+		return m.confirm.serviceName
+	}
+	if m.confirm.name != "" {
+		return m.confirm.name
+	}
+	return ""
+}
+
 func managedStatusSymbol(state string) string {
 	switch state {
 	case "running":
