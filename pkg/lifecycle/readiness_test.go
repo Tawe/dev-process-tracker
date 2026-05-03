@@ -323,13 +323,13 @@ func TestSelectReadinessPolicy_DefaultTimeout(t *testing.T) {
 	t.Parallel()
 
 	policy := SelectReadinessPolicy(nil, []int{3000})
-	if policy.Timeout != 5*time.Second {
-		t.Errorf("default port-bound timeout should be 5s, got %v", policy.Timeout)
+	if policy.Timeout != defaultPortBoundTimeout {
+		t.Errorf("default port-bound timeout should be %v, got %v", defaultPortBoundTimeout, policy.Timeout)
 	}
 
 	policy2 := SelectReadinessPolicy(nil, nil)
-	if policy2.Timeout != 3*time.Second {
-		t.Errorf("default process-only timeout should be 3s, got %v", policy2.Timeout)
+	if policy2.Timeout != defaultProcessOnlyTimeout {
+		t.Errorf("default process-only timeout should be %v, got %v", defaultProcessOnlyTimeout, policy2.Timeout)
 	}
 }
 

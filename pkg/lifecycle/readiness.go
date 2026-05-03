@@ -12,6 +12,13 @@ import (
 // ErrReadinessTimeout is returned when a service does not become ready within the timeout.
 var ErrReadinessTimeout = fmt.Errorf("service did not become ready within the timeout")
 
+// Default readiness timeouts. Package-level constants so tests and
+// production code share a single source of truth.
+const (
+	defaultPortBoundTimeout   = 20 * time.Second
+	defaultProcessOnlyTimeout = 3 * time.Second
+)
+
 // ProcessChecker checks if a process is alive.
 type ProcessChecker interface {
 	IsRunning(pid int) bool
@@ -43,7 +50,7 @@ func (p *ReadinessPolicy) Wait(
 	logsTail func() []string,
 ) error {
 	if p.Timeout <= 0 {
-		p.Timeout = 5 * time.Second
+		p.Timeout = defaultPortBoundTimeout
 	}
 
 	deadline := time.Now().Add(p.Timeout)
@@ -139,13 +146,13 @@ func SelectReadinessPolicy(cfg *models.ReadinessConfig, ports []int) ReadinessPo
 	if len(ports) > 0 {
 		return ReadinessPolicy{
 			Mode:    models.ReadinessPortBound,
-			Timeout: 5 * time.Second,
+			Timeout: defaultPortBoundTimeout,
 		}
 	}
 
 	return ReadinessPolicy{
 		Mode:    models.ReadinessProcessOnly,
-		Timeout: 3 * time.Second,
+		Timeout: defaultProcessOnlyTimeout,
 	}
 }
 

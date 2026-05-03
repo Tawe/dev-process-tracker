@@ -300,7 +300,7 @@ Start messages must use decisive operator language and must state the resolved o
 - `No-op: "api" is already running on port 3000 (PID 4821).`
 - `Blocked: port 3000 is in use by PID 4821 (python). Stop it or change the service port.`
 - `Invalid: "api" has a missing working directory: /path/to/project.`
-- `Failed: "api" did not become ready within 5s. Check logs with devpt logs api.`
+- `Failed: "api" did not become ready within 20s. Check logs with devpt logs api.`
 
 ---
 
