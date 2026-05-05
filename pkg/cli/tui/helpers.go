@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +12,9 @@ import (
 
 	"github.com/devports/devpt/pkg/models"
 )
+
+// pythonVersionedRe matches versioned python binaries: python3, python3.12, python2.7, etc.
+var pythonVersionedRe = regexp.MustCompile(`^python\d.*`)
 
 func fixedCell(s string, width int) string {
 	if width <= 0 {
@@ -219,7 +223,7 @@ func isRuntimeCommand(raw string) bool {
 	switch base {
 	case "node", "nodejs", "npm", "npx", "pnpm", "yarn", "bun", "bunx", "deno",
 		"vite", "webpack", "webpack-dev-server", "next", "next-server", "nuxt", "ts-node", "tsx",
-		"python", "python3", "pip", "pipenv", "poetry",
+		"python", "pip", "pipenv", "poetry",
 		"ruby", "rails",
 		"go",
 		"java", "javac", "gradle", "mvn",
@@ -227,6 +231,10 @@ func isRuntimeCommand(raw string) bool {
 		"php":
 		return true
 	default:
+		// Match versioned binaries like python3, python3.12, python2.7
+		if pythonVersionedRe.MatchString(base) {
+			return true
+		}
 		return false
 	}
 }
