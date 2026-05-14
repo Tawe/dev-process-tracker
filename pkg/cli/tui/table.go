@@ -353,45 +353,27 @@ func (m *topModel) renderRunningTable(width int, visible []*models.ServerInfo, d
 		lines = append(lines, fitAnsiLine(line, width))
 	}
 
-	// Apply visual group selection highlight when group toggle is active (before selection highlight)
-	if m.groupHighlightNamespace != nil {
-		groupStyle := lipgloss.NewStyle().Background(lipgloss.Color("61")).Width(width)
-		for i, srv := range visible {
-			if i == m.selected {
-				continue // active row keeps normal selection color
-			}
-			name := m.serviceNameFor(srv)
-			if extractNamespace(name) == *m.groupHighlightNamespace {
-				idx := rowIndices[i]
-				lines[idx] = groupStyle.Render(lines[idx])
-			}
-		}
+	// Apply row styles using shared color logic: group members, selection, confirm target.
+	confirmActive := m.activeModalKind() == modalConfirm
+	confirmTarget := m.confirmTargetName()
+	confirmPID := 0
+	if m.confirm != nil && m.confirm.kind == confirmStopPID {
+		confirmPID = m.confirm.pid
 	}
-
-	if m.selected >= 0 && m.selected < len(visible) {
-		idx := rowIndices[m.selected]
-		bg := "8"
-		fg := "15"
-		if m.focus == focusRunning {
-			bg = "57"
+	for i, srv := range visible {
+		name := m.serviceNameFor(srv)
+		isGroup := m.groupHighlightNamespace != nil && extractNamespace(name) == *m.groupHighlightNamespace
+		isConfirm := confirmActive && ((confirmTarget != "" && name == confirmTarget) ||
+			(confirmPID != 0 && srv.ProcessRecord != nil && srv.ProcessRecord.PID == confirmPID))
+		c := rowColorsFor(m.focus == focusRunning, i == m.selected, isConfirm, isGroup, confirmActive)
+		if c.bg == "" {
+			continue
 		}
-		// Override with amber when confirm dialog targets this row
-		if m.activeModalKind() == modalConfirm {
-			if ct := m.confirmTargetName(); ct != "" {
-				selName := m.serviceNameFor(visible[m.selected])
-				if selName == ct {
-					bg = "178"
-					fg = "0"
-				}
-			}
-			if m.confirm != nil && m.confirm.kind == confirmStopPID && m.confirm.pid != 0 {
-				if visible[m.selected].ProcessRecord != nil && visible[m.selected].ProcessRecord.PID == m.confirm.pid {
-					bg = "178"
-					fg = "0"
-				}
-			}
+		style := lipgloss.NewStyle().Background(lipgloss.Color(c.bg))
+		if c.fg != "" {
+			style = style.Foreground(lipgloss.Color(c.fg))
 		}
-		lines[idx] = lipgloss.NewStyle().Background(lipgloss.Color(bg)).Foreground(lipgloss.Color(fg)).Render(lines[idx])
+		lines[rowIndices[i]] = style.Render(lines[rowIndices[i]])
 	}
 
 	out := strings.Join(lines, "\n")
@@ -457,23 +439,13 @@ func (m *topModel) renderManagedList(width int, managed []*models.ManagedService
 			plainLine = fmt.Sprintf("%s (ports: %v)", plainLine, svc.Ports)
 		}
 
-		// Determine background for this row
-		var rowBg string
-		var rowFg string
-		confirmTarget := m.confirmTargetName()
-		switch {
-		case confirmTarget == svc.Name && m.activeModalKind() == modalConfirm:
-			rowBg = "178"
-			rowFg = "0"
-		case i == m.managedSel && m.focus == focusManaged:
-			rowBg = "57"
-			rowFg = "15"
-		case m.groupHighlightNamespace != nil && extractNamespace(svc.Name) == *m.groupHighlightNamespace:
-			rowBg = "61"
-		case i == m.managedSel:
-			rowBg = "8"
-			rowFg = "15"
-		}
+		// Determine background for this row via shared color logic
+		confirmActive := m.activeModalKind() == modalConfirm
+		isConfirm := m.confirmTargetName() == svc.Name && confirmActive
+		isGroup := m.groupHighlightNamespace != nil && extractNamespace(svc.Name) == *m.groupHighlightNamespace
+		c := rowColorsFor(m.focus == focusManaged, i == m.managedSel, isConfirm, isGroup, confirmActive)
+		rowBg := c.bg
+		rowFg := c.fg
 
 		var line string
 		if rowBg != "" {
@@ -587,6 +559,43 @@ func (t *processTable) updateViewportForTableY(viewportY int, viewportX int, msg
 		return cmd
 	}
 	return nil
+}
+
+// rowColors holds the foreground and background ANSI color codes for a table row.
+type rowColors struct {
+	bg string // empty means no background
+	fg string // empty means default foreground
+}
+
+// rowColorsFor computes the visual style for a table row based on its state.
+// Parameters:
+//   - isFocusedPanel: this row's panel has keyboard focus
+//   - isSelected: this row is the cursor selection in its panel
+//   - isConfirmTarget: this row is the target of an active confirm dialog
+//   - isGroupMember: this row belongs to the active group highlight namespace
+//   - confirmActive: a confirm modal is currently shown
+//
+// Priority (first match wins):
+//   1. Confirm target or selected+group during confirm → amber/orange (178/0)
+//   2. Focused select  → bright blue  (57/15)
+//   3. Group member    → dimmed orange (94) during confirm, blue (61) otherwise
+//   4. Unfocused select → gray         (8/15)
+func rowColorsFor(isFocusedPanel, isSelected, isConfirmTarget, isGroupMember, confirmActive bool) rowColors {
+	switch {
+	case isConfirmTarget || (confirmActive && isSelected && isGroupMember):
+		return rowColors{bg: "178", fg: "0"}
+	case isSelected && isFocusedPanel:
+		return rowColors{bg: "57", fg: "15"}
+	case isGroupMember:
+		if confirmActive {
+			return rowColors{bg: "94"}
+		}
+		return rowColors{bg: "61"}
+	case isSelected:
+		return rowColors{bg: "8", fg: "15"}
+	default:
+		return rowColors{}
+	}
 }
 
 // managedClickRegion reports which managed sub-region a click falls in.
