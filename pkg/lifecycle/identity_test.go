@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"testing"
+	"time"
 
 	"github.com/devports/devpt/pkg/models"
 )
@@ -79,6 +80,40 @@ func TestVerifyIdentity_UniquePortOwnership(t *testing.T) {
 	result := VerifyIdentity(svc, []*models.ProcessRecord{proc}, services)
 	if !result.Verified {
 		t.Error("Unique port ownership with no CWD conflict should verify identity")
+	}
+}
+
+func TestVerifyIdentity_SharedCWDUniquePortsRemainNonAmbiguous(t *testing.T) {
+	t.Parallel()
+
+	api := &models.ManagedService{
+		Name:  "api",
+		CWD:   "/shared/project",
+		Ports: []int{3000},
+	}
+	worker := &models.ManagedService{
+		Name:  "worker",
+		CWD:   "/shared/project",
+		Ports: []int{4000},
+	}
+	proc := &models.ProcessRecord{
+		PID:  1234,
+		CWD:  "/shared/project",
+		Port: 3000,
+	}
+	services := []*models.ManagedService{api, worker}
+
+	apiResult := VerifyIdentity(api, []*models.ProcessRecord{proc}, services)
+	if !apiResult.Verified {
+		t.Fatalf("service with uniquely declared process port should verify even when CWD is shared")
+	}
+	if apiResult.Process != proc {
+		t.Fatalf("verified service should point at the matching process")
+	}
+
+	workerResult := VerifyIdentity(worker, []*models.ProcessRecord{proc}, services)
+	if workerResult.Verified {
+		t.Fatalf("service with a different unique port should not own the process")
 	}
 }
 
@@ -203,6 +238,108 @@ func TestVerifyIdentity_PIDReuse(t *testing.T) {
 	// Should NOT be classified as running
 	if result.Verified {
 		t.Error("PID reuse should not result in verified/running status")
+	}
+}
+
+func TestVerifyIdentity_PIDStartTimeMatchOverridesWeakerEvidence(t *testing.T) {
+	t.Parallel()
+
+	pid := 1234
+	startTime := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	svc := &models.ManagedService{
+		Name:                 "api",
+		CWD:                  "/project/app",
+		LastPID:              &pid,
+		LastProcessStartTime: &startTime,
+	}
+	proc := &models.ProcessRecord{
+		PID:       pid,
+		CWD:       "/other/path",
+		Port:      5000,
+		StartTime: &startTime,
+	}
+
+	result := VerifyIdentity(svc, []*models.ProcessRecord{proc}, []*models.ManagedService{svc})
+	if !result.Verified {
+		t.Fatalf("PID + process start time should verify ownership, got status %q", result.Status)
+	}
+	if result.Process == nil || result.Process.PID != pid {
+		t.Fatalf("expected verified process PID %d, got %#v", pid, result.Process)
+	}
+}
+
+func TestVerifyIdentity_PIDStartTimeMismatchBlocksLegacyEvidence(t *testing.T) {
+	t.Parallel()
+
+	pid := 1234
+	storedStart := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	actualStart := storedStart.Add(5 * time.Second)
+	svc := &models.ManagedService{
+		Name:                 "api",
+		CWD:                  "/project/app",
+		Ports:                []int{3000},
+		LastPID:              &pid,
+		LastProcessStartTime: &storedStart,
+	}
+	proc := &models.ProcessRecord{
+		PID:         pid,
+		CWD:         "/project/app",
+		ProjectRoot: "/project",
+		Port:        3000,
+		StartTime:   &actualStart,
+	}
+
+	result := VerifyIdentity(svc, []*models.ProcessRecord{proc}, []*models.ManagedService{svc})
+	if result.Verified {
+		t.Fatal("start-time mismatch must not be rescued by CWD, root, port, or PID-path evidence")
+	}
+	if result.Status != "unknown" {
+		t.Fatalf("start-time mismatch status = %q, want unknown", result.Status)
+	}
+}
+
+func TestVerifyIdentity_PIDStartTimeMissingBlocksStoredPIDOwnership(t *testing.T) {
+	t.Parallel()
+
+	pid := 1234
+	storedStart := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	svc := &models.ManagedService{
+		Name:                 "api",
+		CWD:                  "/project/app",
+		LastPID:              &pid,
+		LastProcessStartTime: &storedStart,
+	}
+	proc := &models.ProcessRecord{
+		PID: pid,
+		CWD: "/project/app",
+	}
+
+	result := VerifyIdentity(svc, []*models.ProcessRecord{proc}, []*models.ManagedService{svc})
+	if result.Verified {
+		t.Fatal("stored PID ownership should not verify when live process start time is unavailable")
+	}
+	if result.Status != "unknown" {
+		t.Fatalf("missing live start-time status = %q, want unknown", result.Status)
+	}
+}
+
+func TestVerifyIdentity_LegacyPIDPathFallbackWithoutProcessStartTime(t *testing.T) {
+	t.Parallel()
+
+	pid := 1234
+	svc := &models.ManagedService{
+		Name:    "api",
+		CWD:     "/project/app",
+		LastPID: &pid,
+	}
+	proc := &models.ProcessRecord{
+		PID: pid,
+		CWD: "/project/app",
+	}
+
+	result := VerifyIdentity(svc, []*models.ProcessRecord{proc}, []*models.ManagedService{svc})
+	if !result.Verified {
+		t.Fatalf("legacy PID + path evidence should verify when LastProcessStartTime is absent, got %q", result.Status)
 	}
 }
 

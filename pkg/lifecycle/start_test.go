@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/devports/devpt/pkg/models"
 )
@@ -12,6 +13,7 @@ type mockDeps struct {
 	services     map[string]*models.ManagedService
 	processes    []*models.ProcessRecord
 	runningPIDs  map[int]bool
+	startTimes   map[int]time.Time
 	nextPID      int
 	healthPorts  map[int]bool
 	logTail      []string
@@ -22,6 +24,7 @@ type mockDeps struct {
 	scanErr      error
 	startErr     error
 	startFn      func(svc *models.ManagedService) (int, error)
+	startTimeErr error
 	stopErr      error
 	crashOnStart bool // if true, started process is not running
 }
@@ -30,6 +33,7 @@ func newMockDeps() *mockDeps {
 	return &mockDeps{
 		services:     make(map[string]*models.ManagedService),
 		runningPIDs:  make(map[int]bool),
+		startTimes:   make(map[int]time.Time),
 		healthPorts:  make(map[int]bool),
 		locked:       make(map[string]bool),
 		projectRoots: make(map[string]string),
@@ -47,6 +51,19 @@ func (m *mockDeps) UpdateServicePID(name string, pid int) error {
 	}
 	if svc, ok := m.services[name]; ok {
 		svc.LastPID = &pid
+		svc.LastProcessStartTime = nil
+	}
+	return nil
+}
+
+func (m *mockDeps) UpdateServiceProcessIdentity(name string, pid int, processStartTime time.Time) error {
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	if svc, ok := m.services[name]; ok {
+		svc.LastPID = &pid
+		t := processStartTime
+		svc.LastProcessStartTime = &t
 	}
 	return nil
 }
@@ -57,6 +74,7 @@ func (m *mockDeps) ClearServicePID(name string) error {
 	}
 	if svc, ok := m.services[name]; ok {
 		svc.LastPID = nil
+		svc.LastProcessStartTime = nil
 	}
 	return nil
 }
@@ -72,17 +90,29 @@ func (m *mockDeps) StartProcess(svc *models.ManagedService) (int, error) {
 	m.nextPID++
 	if !m.crashOnStart {
 		m.runningPIDs[pid] = true
+		m.startTimes[pid] = time.Date(2026, time.May, 27, 12, 0, pid%60, 0, time.UTC)
 	}
 	return pid, nil
 }
 
 func (m *mockDeps) StopProcess(pid int) error {
 	delete(m.runningPIDs, pid)
+	delete(m.startTimes, pid)
 	return m.stopErr
 }
 
 func (m *mockDeps) IsRunning(pid int) bool {
 	return m.runningPIDs[pid]
+}
+
+func (m *mockDeps) GetProcessStartTime(pid int) (time.Time, error) {
+	if m.startTimeErr != nil {
+		return time.Time{}, m.startTimeErr
+	}
+	if t, ok := m.startTimes[pid]; ok {
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("process start time unavailable")
 }
 
 func (m *mockDeps) ScanProcesses() ([]*models.ProcessRecord, error) {
@@ -263,6 +293,46 @@ func TestStart_Success(t *testing.T) {
 	if result.PID == 0 {
 		t.Error("success should include PID")
 	}
+	if svc.LastPID == nil || *svc.LastPID != result.PID {
+		t.Fatalf("success should persist LastPID %d, got %v", result.PID, svc.LastPID)
+	}
+	if svc.LastProcessStartTime == nil {
+		t.Fatal("success should persist process start time")
+	}
+}
+
+func TestStart_ProcessStartTimeUnavailableFailsWithoutPersisting(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	svc := &models.ManagedService{
+		Name:    "api",
+		CWD:     tmpDir,
+		Command: "echo hi",
+		Readiness: &models.ReadinessConfig{
+			Mode:    models.ReadinessProcessOnly,
+			Timeout: 1,
+		},
+	}
+
+	deps := newMockDeps()
+	deps.services["api"] = svc
+	deps.processes = []*models.ProcessRecord{}
+	deps.startTimeErr = fmt.Errorf("unsupported platform")
+
+	result := StartService(deps, svc)
+	if result.Outcome != OutcomeFailed {
+		t.Fatalf("start-time lookup failure should return failed, got %q: %s", result.Outcome, result.Message)
+	}
+	if svc.LastPID != nil {
+		t.Fatalf("failed identity confirmation should not persist LastPID, got %d", *svc.LastPID)
+	}
+	if svc.LastProcessStartTime != nil {
+		t.Fatal("failed identity confirmation should not persist process start time")
+	}
+	if deps.IsRunning(result.PID) {
+		t.Fatalf("failed identity confirmation should stop PID %d", result.PID)
+	}
 }
 
 func TestStart_ReadinessTimeout(t *testing.T) {
@@ -290,6 +360,40 @@ func TestStart_ReadinessTimeout(t *testing.T) {
 	}
 	if result.Outcome == OutcomeFailed {
 		t.Logf("Readiness timeout correctly reported failure: %s", result.Message)
+	}
+}
+
+func TestStart_ReadinessTimeoutPreservesLogDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	svc := &models.ManagedService{
+		Name:    "api",
+		CWD:     tmpDir,
+		Command: "sleep 100",
+		Ports:   []int{3000},
+		Readiness: &models.ReadinessConfig{
+			Mode:    models.ReadinessPortBound,
+			Timeout: 1,
+		},
+	}
+
+	deps := newMockDeps()
+	deps.services["api"] = svc
+	deps.processes = []*models.ProcessRecord{}
+	deps.logTail = []string{"listening check timed out", "last known log line"}
+
+	result := StartService(deps, svc)
+	if result.Outcome != OutcomeFailed {
+		t.Fatalf("readiness timeout should fail, got %q: %s", result.Outcome, result.Message)
+	}
+	if len(result.Diagnostics) != len(deps.logTail) {
+		t.Fatalf("expected diagnostics to include log tail, got %#v", result.Diagnostics)
+	}
+	for i, line := range deps.logTail {
+		if result.Diagnostics[i] != line {
+			t.Fatalf("diagnostic line %d = %q, want %q", i, result.Diagnostics[i], line)
+		}
 	}
 }
 

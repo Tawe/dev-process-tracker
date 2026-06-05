@@ -24,6 +24,7 @@ type Manager struct {
 var ErrNoLogs = errors.New("no logs available")
 var ErrNeedSudo = errors.New("requires sudo to terminate process")
 var ErrNoProcessLogs = errors.New("no process logs available")
+var ErrProcessStartTimeUnavailable = errors.New("process start time unavailable")
 
 // NewManager creates a new process manager
 func NewManager(logsDir string) *Manager {
@@ -141,6 +142,17 @@ func (m *Manager) IsRunning(pid int) bool {
 		return false
 	}
 	return m.isAlive(pid)
+}
+
+// GetProcessStartTime returns the OS-reported start time for a live process.
+func (m *Manager) GetProcessStartTime(pid int) (time.Time, error) {
+	if pid <= 0 {
+		return time.Time{}, fmt.Errorf("invalid pid: %d", pid)
+	}
+	if !m.IsRunning(pid) {
+		return time.Time{}, fmt.Errorf("process %d is not running", pid)
+	}
+	return getProcessStartTime(pid)
 }
 
 // createLogFile creates a new log file for a service

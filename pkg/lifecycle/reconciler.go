@@ -6,9 +6,9 @@ import (
 
 // ReconciledService holds the result of reconciling a service against live state.
 type ReconciledService struct {
-	Status          string                // "running", "stopped", "crashed", "unknown"
-	Verified        bool
-	Process         *models.ProcessRecord
+	Status           string // "running", "stopped", "crashed", "unknown"
+	Verified         bool
+	Process          *models.ProcessRecord
 	HasStaleMetadata bool // true when LastPID exists but no verified process was found
 }
 
@@ -43,6 +43,14 @@ func ReconcileWithResolver(
 			Process:  identity.Process,
 		}
 	}
+	if identity.Status == string(models.StatusUnknown) {
+		return ReconciledService{
+			Status:           string(models.StatusUnknown),
+			Verified:         false,
+			Process:          identity.Process,
+			HasStaleMetadata: svc.LastPID != nil && *svc.LastPID > 0,
+		}
+	}
 
 	// Check if identity is ambiguous (multiple services match)
 	if isAmbiguousWithResolver(svc, processes, allServices, resolver) {
@@ -56,8 +64,8 @@ func ReconcileWithResolver(
 	if svc.LastPID != nil && *svc.LastPID > 0 {
 		// Had a PID but no verified process now
 		return ReconciledService{
-			Status:          string(models.StatusCrashed),
-			Verified:        false,
+			Status:           string(models.StatusCrashed),
+			Verified:         false,
 			HasStaleMetadata: true,
 		}
 	}

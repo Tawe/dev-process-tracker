@@ -3,8 +3,12 @@
 package process
 
 import (
+	"fmt"
 	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
+	"time"
 )
 
 func setProcessGroup(cmd *exec.Cmd) {
@@ -31,4 +35,30 @@ func killProcessFallback(pid int) error {
 
 func isProcessAlive(pid int) bool {
 	return syscall.Kill(pid, syscall.Signal(0)) == nil
+}
+
+func getProcessStartTime(pid int) (time.Time, error) {
+	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "lstart=")
+	out, err := cmd.Output()
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%w: ps start time for pid %d: %v", ErrProcessStartTimeUnavailable, pid, err)
+	}
+
+	raw := strings.TrimSpace(string(out))
+	if raw == "" {
+		return time.Time{}, fmt.Errorf("%w: empty ps start time for pid %d", ErrProcessStartTimeUnavailable, pid)
+	}
+
+	layouts := []string{
+		"Mon Jan _2 15:04:05 2006",
+		"Mon Jan 2 15:04:05 2006",
+	}
+	for _, layout := range layouts {
+		startTime, parseErr := time.ParseInLocation(layout, raw, time.Local)
+		if parseErr == nil {
+			return startTime, nil
+		}
+	}
+
+	return time.Time{}, fmt.Errorf("%w: cannot parse %q for pid %d", ErrProcessStartTimeUnavailable, raw, pid)
 }

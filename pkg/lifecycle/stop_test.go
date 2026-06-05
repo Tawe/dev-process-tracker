@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/devports/devpt/pkg/models"
 )
@@ -138,12 +139,14 @@ func TestStop_MetadataClearedOnSuccess(t *testing.T) {
 	t.Parallel()
 
 	pid := 1234
+	startTime := time.Date(2026, time.May, 27, 12, 0, 0, 0, time.UTC)
 	svc := &models.ManagedService{
-		Name:    "api",
-		CWD:     "/project",
-		LastPID: &pid,
+		Name:                 "api",
+		CWD:                  "/project",
+		LastPID:              &pid,
+		LastProcessStartTime: &startTime,
 	}
-	proc := &models.ProcessRecord{PID: 1234, CWD: "/project", Port: 3000}
+	proc := &models.ProcessRecord{PID: 1234, CWD: "/project", Port: 3000, StartTime: &startTime}
 
 	deps := newMockDeps()
 	deps.services["api"] = svc
@@ -156,5 +159,42 @@ func TestStop_MetadataClearedOnSuccess(t *testing.T) {
 		if svc.LastPID != nil {
 			t.Error("LastPID should be cleared after successful stop")
 		}
+		if svc.LastProcessStartTime != nil {
+			t.Error("LastProcessStartTime should be cleared after successful stop")
+		}
+	}
+}
+
+func TestStop_PIDStartTimeMismatchBlocked(t *testing.T) {
+	t.Parallel()
+
+	pid := 1234
+	storedStart := time.Date(2026, time.May, 27, 12, 0, 0, 0, time.UTC)
+	actualStart := storedStart.Add(time.Minute)
+	svc := &models.ManagedService{
+		Name:                 "api",
+		CWD:                  "/project",
+		LastPID:              &pid,
+		LastProcessStartTime: &storedStart,
+	}
+	proc := &models.ProcessRecord{PID: pid, CWD: "/project", Port: 3000, StartTime: &actualStart}
+
+	deps := newMockDeps()
+	deps.services["api"] = svc
+	deps.processes = []*models.ProcessRecord{proc}
+	deps.runningPIDs[pid] = true
+
+	result := StopService(deps, svc)
+	if result.Outcome != OutcomeBlocked {
+		t.Fatalf("start-time mismatch should block stop, got %q: %s", result.Outcome, result.Message)
+	}
+	if !deps.IsRunning(pid) {
+		t.Fatal("mismatched PID must not be stopped")
+	}
+	if svc.LastPID == nil || *svc.LastPID != pid {
+		t.Fatal("blocked stop should preserve LastPID")
+	}
+	if svc.LastProcessStartTime == nil || !svc.LastProcessStartTime.Equal(storedStart) {
+		t.Fatal("blocked stop should preserve LastProcessStartTime")
 	}
 }

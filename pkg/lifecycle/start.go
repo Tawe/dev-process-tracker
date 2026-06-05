@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/devports/devpt/pkg/models"
 )
@@ -14,12 +15,14 @@ type Deps interface {
 	// Registry operations
 	GetService(name string) *models.ManagedService
 	UpdateServicePID(name string, pid int) error
+	UpdateServiceProcessIdentity(name string, pid int, processStartTime time.Time) error
 	ClearServicePID(name string) error
 
 	// Process operations
 	StartProcess(svc *models.ManagedService) (int, error)
 	StopProcess(pid int) error
 	IsRunning(pid int) bool
+	GetProcessStartTime(pid int) (time.Time, error)
 
 	// Scanning
 	ScanProcesses() ([]*models.ProcessRecord, error)
@@ -111,8 +114,8 @@ func StartService(deps Deps, svc *models.ManagedService) Result {
 	// Verify process is alive
 	if !deps.IsRunning(pid) {
 		return Result{
-			Outcome: OutcomeFailed,
-			Message: fmt.Sprintf("Failed: %q exited immediately after start. Check logs with devpt logs %s.", svc.Name, svc.Name),
+			Outcome:     OutcomeFailed,
+			Message:     fmt.Sprintf("Failed: %q exited immediately after start. Check logs with devpt logs %s.", svc.Name, svc.Name),
 			Diagnostics: deps.GetLogTail(svc.Name, 10),
 		}
 	}
@@ -140,8 +143,20 @@ func StartService(deps Deps, svc *models.ManagedService) Result {
 		}
 	}
 
+	processStartTime, err := deps.GetProcessStartTime(pid)
+	if err != nil {
+		diagnostics := deps.GetLogTail(svc.Name, 20)
+		_ = deps.StopProcess(pid)
+		return Result{
+			Outcome:     OutcomeFailed,
+			Message:     fmt.Sprintf("Failed: could not confirm process identity for %q (PID %d): %v", svc.Name, pid, err),
+			PID:         pid,
+			Diagnostics: diagnostics,
+		}
+	}
+
 	// Persist confirmed run (C6: only after identity and readiness confirmed)
-	if err := deps.UpdateServicePID(svc.Name, pid); err != nil {
+	if err := deps.UpdateServiceProcessIdentity(svc.Name, pid, processStartTime); err != nil {
 		return Result{
 			Outcome: OutcomeSuccess,
 			Message: fmt.Sprintf("Success: started %q (PID %d), but failed to update registry: %v", svc.Name, pid, err),

@@ -1,6 +1,8 @@
 package models
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -64,9 +66,9 @@ func TestManagedServiceReadinessBackwardCompat(t *testing.T) {
 	t.Parallel()
 
 	svc := &ManagedService{
-		Name:    "test",
-		CWD:     "/tmp",
-		Command: "echo hi",
+		Name:      "test",
+		CWD:       "/tmp",
+		Command:   "echo hi",
 		CreatedAt: time.Time{},
 		UpdatedAt: time.Time{},
 	}
@@ -98,4 +100,66 @@ func TestManagedServiceWithReadinessConfig(t *testing.T) {
 	if svc.Readiness.Timeout != 5 {
 		t.Errorf("Timeout = %v, want 5", svc.Readiness.Timeout)
 	}
+}
+
+func TestManagedServiceProcessStartTimeMetadata(t *testing.T) {
+	t.Parallel()
+
+	lifecycleStart := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	processStart := lifecycleStart.Add(-2 * time.Second)
+	pid := 4321
+	svc := ManagedService{
+		Name:                 "api",
+		CWD:                  "/app",
+		Command:              "npm start",
+		LastPID:              &pid,
+		LastStart:            &lifecycleStart,
+		LastProcessStartTime: &processStart,
+	}
+
+	if svc.LastProcessStartTime == nil {
+		t.Fatal("LastProcessStartTime should be set")
+	}
+	if svc.LastStart == nil {
+		t.Fatal("LastStart should be set")
+	}
+	if svc.LastProcessStartTime.Equal(*svc.LastStart) {
+		t.Fatal("LastProcessStartTime must be distinct from LastStart event time")
+	}
+
+	data, err := json.Marshal(svc)
+	if err != nil {
+		t.Fatalf("marshal ManagedService: %v", err)
+	}
+	if !json.Valid(data) {
+		t.Fatalf("invalid json: %s", data)
+	}
+	if got := string(data); !contains(got, `"last_process_start_time"`) {
+		t.Fatalf("expected last_process_start_time json field, got %s", got)
+	}
+}
+
+func TestManagedServiceProcessStartTimeOptional(t *testing.T) {
+	t.Parallel()
+
+	svc := ManagedService{
+		Name:    "legacy",
+		CWD:     "/app",
+		Command: "npm start",
+	}
+	if svc.LastProcessStartTime != nil {
+		t.Fatal("LastProcessStartTime should be nil by default for legacy compatibility")
+	}
+
+	data, err := json.Marshal(svc)
+	if err != nil {
+		t.Fatalf("marshal ManagedService: %v", err)
+	}
+	if got := string(data); contains(got, "last_process_start_time") {
+		t.Fatalf("optional LastProcessStartTime should be omitted when nil, got %s", got)
+	}
+}
+
+func contains(s, substr string) bool {
+	return strings.Contains(s, substr)
 }

@@ -89,6 +89,33 @@ func VerifyIdentityWithResolver(
 
 	myID := identities[svc]
 
+	if svc.LastPID != nil && *svc.LastPID > 0 && svc.LastProcessStartTime != nil {
+		for _, proc := range processes {
+			if proc == nil || proc.PID != *svc.LastPID {
+				continue
+			}
+			if proc.StartTime == nil {
+				return IdentityResult{
+					Verified: false,
+					Process:  proc,
+					Status:   "unknown",
+				}
+			}
+			if proc.StartTime.Equal(*svc.LastProcessStartTime) {
+				return IdentityResult{
+					Verified: true,
+					Process:  proc,
+					Status:   "verified",
+				}
+			}
+			return IdentityResult{
+				Verified: false,
+				Process:  proc,
+				Status:   "unknown",
+			}
+		}
+	}
+
 	// Evidence 1: Exact CWD match (must be unique among managed services)
 	if myID.cwd != "" && cwdCount[myID.cwd] == 1 {
 		for _, proc := range processes {

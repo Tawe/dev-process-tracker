@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/devports/devpt/pkg/health"
 	"github.com/devports/devpt/pkg/models"
@@ -292,6 +293,83 @@ func TestStatusCmd_CrashedServiceStatus(t *testing.T) {
 	assert.Contains(t, output, "crashed", "output should show crashed status")
 }
 
+func TestDiscoverServers_UsesLifecycleIdentityForPIDStartTimeMismatch(t *testing.T) {
+	t.Parallel()
+
+	app, _, _ := newTestApp(t)
+	pid := 1234
+	cwd := t.TempDir()
+	storedStart := time.Date(2026, time.May, 27, 12, 0, 0, 0, time.UTC)
+	actualStart := storedStart.Add(time.Minute)
+	svc := &models.ManagedService{
+		Name:                 "api",
+		CWD:                  cwd,
+		Command:              "node server.js",
+		Ports:                []int{3000},
+		LastPID:              &pid,
+		LastProcessStartTime: &storedStart,
+	}
+	proc := &models.ProcessRecord{
+		PID:       pid,
+		Port:      3000,
+		Command:   "node server.js",
+		CWD:       cwd,
+		StartTime: &actualStart,
+	}
+
+	servers := app.buildServerInfos([]*models.ProcessRecord{proc}, []*models.ManagedService{svc})
+
+	var managed *models.ServerInfo
+	for _, srv := range servers {
+		if srv.ManagedService == svc {
+			managed = srv
+			break
+		}
+	}
+
+	require.NotNil(t, managed, "managed service should still be listed")
+	assert.Equal(t, string(models.StatusUnknown), managed.Status)
+	assert.Nil(t, managed.ProcessRecord, "mismatched PID must not be shown as the managed process")
+}
+
+func TestDiscoverServers_LegacyRegistryKeepsExistingEvidenceChain(t *testing.T) {
+	t.Parallel()
+
+	app, _, _ := newTestApp(t)
+	pid := 1234
+	cwd := t.TempDir()
+	startTime := time.Date(2026, time.May, 27, 12, 0, 0, 0, time.UTC)
+	svc := &models.ManagedService{
+		Name:    "api",
+		CWD:     cwd,
+		Command: "node server.js",
+		Ports:   []int{3000},
+		LastPID: &pid,
+	}
+	proc := &models.ProcessRecord{
+		PID:       pid,
+		Port:      3000,
+		Command:   "node server.js",
+		CWD:       cwd,
+		StartTime: &startTime,
+	}
+
+	servers := app.buildServerInfos([]*models.ProcessRecord{proc}, []*models.ManagedService{svc})
+
+	var managed *models.ServerInfo
+	for _, srv := range servers {
+		if srv.ManagedService == svc {
+			managed = srv
+			break
+		}
+	}
+
+	require.NotNil(t, managed, "managed service should be listed")
+	require.NotNil(t, managed.ProcessRecord, "legacy PID should still use path evidence")
+	assert.Equal(t, string(models.StatusRunning), managed.Status)
+	assert.Equal(t, pid, managed.ProcessRecord.PID)
+}
+
 // ---------------------------------------------------------------------------
 // Additional edge-case tests
 // ---------------------------------------------------------------------------
@@ -481,9 +559,9 @@ func TestPrintServerStatus_CrashedNoLogs(t *testing.T) {
 			CWD:     "/opt/ghost",
 			Ports:   []int{2368},
 		},
-		Source:      models.SourceManaged,
-		Status:      "crashed",
-		CrashReason: "",
+		Source:       models.SourceManaged,
+		Status:       "crashed",
+		CrashReason:  "",
 		CrashLogTail: nil,
 	}
 

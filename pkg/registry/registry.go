@@ -142,7 +142,28 @@ func (r *Registry) UpdateServicePID(name string, pid int) error {
 	}
 
 	svc.LastPID = &pid
+	svc.LastProcessStartTime = nil
 	now := time.Now()
+	svc.LastStart = &now
+	svc.LastStop = nil
+	svc.UpdatedAt = now
+
+	return r.save()
+}
+
+// UpdateServiceProcessIdentity updates the last confirmed process identity for a service.
+func (r *Registry) UpdateServiceProcessIdentity(name string, pid int, processStartTime time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	svc, exists := r.data.Services[name]
+	if !exists {
+		return fmt.Errorf("service %q not found", name)
+	}
+
+	now := time.Now()
+	svc.LastPID = &pid
+	svc.LastProcessStartTime = &processStartTime
 	svc.LastStart = &now
 	svc.LastStop = nil
 	svc.UpdatedAt = now
@@ -162,6 +183,7 @@ func (r *Registry) ClearServicePID(name string) error {
 
 	now := time.Now()
 	svc.LastPID = nil
+	svc.LastProcessStartTime = nil
 	svc.LastStop = &now
 	svc.UpdatedAt = now
 	return r.save()

@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/devports/devpt/pkg/lifecycle"
 	"github.com/devports/devpt/pkg/models"
@@ -19,6 +20,10 @@ func (d *appDeps) GetService(name string) *models.ManagedService {
 
 func (d *appDeps) UpdateServicePID(name string, pid int) error {
 	return d.app.registry.UpdateServicePID(name, pid)
+}
+
+func (d *appDeps) UpdateServiceProcessIdentity(name string, pid int, processStartTime time.Time) error {
+	return d.app.registry.UpdateServiceProcessIdentity(name, pid, processStartTime)
 }
 
 func (d *appDeps) ClearServicePID(name string) error {
@@ -41,8 +46,25 @@ func (d *appDeps) IsRunning(pid int) bool {
 	return d.app.processManager.IsRunning(pid)
 }
 
+func (d *appDeps) GetProcessStartTime(pid int) (time.Time, error) {
+	return d.app.processManager.GetProcessStartTime(pid)
+}
+
 func (d *appDeps) ScanProcesses() ([]*models.ProcessRecord, error) {
-	return d.app.scanner.ScanListeningPorts()
+	processes, err := d.app.scanner.ScanListeningPorts()
+	if err != nil {
+		return nil, err
+	}
+	for _, proc := range processes {
+		if proc == nil || proc.PID <= 0 || proc.StartTime != nil {
+			continue
+		}
+		startTime, startErr := d.app.processManager.GetProcessStartTime(proc.PID)
+		if startErr == nil {
+			proc.StartTime = &startTime
+		}
+	}
+	return processes, nil
 }
 
 func (d *appDeps) ListServices() []*models.ManagedService {

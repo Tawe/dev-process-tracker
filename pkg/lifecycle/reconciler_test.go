@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"testing"
+	"time"
 
 	"github.com/devports/devpt/pkg/models"
 )
@@ -215,5 +216,61 @@ func TestReconcile_PIDReuse_Unknown(t *testing.T) {
 	result := Reconcile(svc, []*models.ProcessRecord{proc}, []*models.ManagedService{svc})
 	if result.Verified {
 		t.Error("PID reuse should NOT verify the service")
+	}
+}
+
+func TestReconcile_PIDStartTimeMatch_Running(t *testing.T) {
+	t.Parallel()
+
+	pid := 1234
+	startTime := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	svc := &models.ManagedService{
+		Name:                 "api",
+		CWD:                  "/project/app",
+		LastPID:              &pid,
+		LastProcessStartTime: &startTime,
+	}
+	proc := &models.ProcessRecord{
+		PID:       pid,
+		CWD:       "/other/path",
+		StartTime: &startTime,
+	}
+
+	result := Reconcile(svc, []*models.ProcessRecord{proc}, []*models.ManagedService{svc})
+	if result.Status != "running" {
+		t.Fatalf("expected running for matching PID + process start time, got %q", result.Status)
+	}
+	if !result.Verified {
+		t.Fatal("expected verified reconcile result")
+	}
+}
+
+func TestReconcile_PIDStartTimeMismatch_Unknown(t *testing.T) {
+	t.Parallel()
+
+	pid := 1234
+	storedStart := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	actualStart := storedStart.Add(5 * time.Second)
+	svc := &models.ManagedService{
+		Name:                 "api",
+		CWD:                  "/project/app",
+		LastPID:              &pid,
+		LastProcessStartTime: &storedStart,
+	}
+	proc := &models.ProcessRecord{
+		PID:       pid,
+		CWD:       "/project/app",
+		StartTime: &actualStart,
+	}
+
+	result := Reconcile(svc, []*models.ProcessRecord{proc}, []*models.ManagedService{svc})
+	if result.Status != "unknown" {
+		t.Fatalf("expected unknown for PID start-time mismatch, got %q", result.Status)
+	}
+	if result.Verified {
+		t.Fatal("mismatched process start time must not verify")
+	}
+	if !result.HasStaleMetadata {
+		t.Fatal("mismatched process start time should flag stale metadata")
 	}
 }

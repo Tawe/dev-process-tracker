@@ -124,8 +124,8 @@ func RestartService(deps Deps, svc *models.ManagedService) Result {
 	// Verify process is alive
 	if !deps.IsRunning(newPID) {
 		return Result{
-			Outcome: OutcomeFailed,
-			Message: fmt.Sprintf("Failed: new instance of %q exited immediately. Check logs with devpt logs %s.", svc.Name, svc.Name),
+			Outcome:     OutcomeFailed,
+			Message:     fmt.Sprintf("Failed: new instance of %q exited immediately. Check logs with devpt logs %s.", svc.Name, svc.Name),
 			Diagnostics: deps.GetLogTail(svc.Name, 10),
 		}
 	}
@@ -163,8 +163,20 @@ func RestartService(deps Deps, svc *models.ManagedService) Result {
 		}
 	}
 
+	processStartTime, err := deps.GetProcessStartTime(newPID)
+	if err != nil {
+		diagnostics := deps.GetLogTail(svc.Name, 20)
+		_ = deps.StopProcess(newPID)
+		return Result{
+			Outcome:     OutcomeFailed,
+			Message:     fmt.Sprintf("Failed: could not confirm process identity for %q (PID %d): %v", svc.Name, newPID, err),
+			PID:         newPID,
+			Diagnostics: diagnostics,
+		}
+	}
+
 	// Persist confirmed run
-	if err := deps.UpdateServicePID(svc.Name, newPID); err != nil {
+	if err := deps.UpdateServiceProcessIdentity(svc.Name, newPID, processStartTime); err != nil {
 		return Result{
 			Outcome: OutcomeSuccess,
 			Message: fmt.Sprintf("Success: started %q (PID %d), but failed to update registry: %v", svc.Name, newPID, err),

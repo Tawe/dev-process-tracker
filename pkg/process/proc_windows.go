@@ -5,6 +5,7 @@ package process
 import (
 	"os/exec"
 	"strconv"
+	"time"
 )
 
 func setProcessGroup(cmd *exec.Cmd) {
@@ -34,4 +35,8 @@ func isProcessAlive(pid int) bool {
 	// Check if process exists using tasklist
 	err := exec.Command("tasklist", "/FI", "PID eq "+strconv.Itoa(pid)).Run()
 	return err == nil
+}
+
+func getProcessStartTime(pid int) (time.Time, error) {
+	return time.Time{}, ErrProcessStartTimeUnavailable
 }
