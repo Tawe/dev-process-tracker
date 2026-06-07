@@ -16,9 +16,9 @@ import (
 )
 
 type processTable struct {
-	runningVP        viewport.Model
-	managedListVP    viewport.Model
-	managedDetailsVP viewport.Model
+	runningVP          viewport.Model
+	managedListVP      viewport.Model
+	selectedDetailsVP  viewport.Model
 
 	lastRunningHeight  int
 	lastManagedHeight  int
@@ -30,9 +30,9 @@ type processTable struct {
 
 func newProcessTable() processTable {
 	return processTable{
-		runningVP:        viewport.New(),
-		managedListVP:    viewport.New(),
-		managedDetailsVP: viewport.New(),
+		runningVP:          viewport.New(),
+		managedListVP:      viewport.New(),
+		selectedDetailsVP:  viewport.New(),
 	}
 }
 
@@ -55,7 +55,7 @@ func (t *processTable) Render(m *topModel, width int) string {
 	runningContent := m.renderRunningTable(width, visible, displayNames)
 	managedHeader := m.renderManagedHeader(width, managed)
 	listContent := m.renderManagedList(width/2, managed)
-	detailsContent := m.renderManagedDetails(width-width/2, managed)
+	detailsContent := m.renderSelectedServiceDetails(width-width/2, visible, managed)
 	runningLines := 1 + strings.Count(runningContent, "\n")
 	listLines := 1 + strings.Count(listContent, "\n")
 	detailsLines := 1 + strings.Count(detailsContent, "\n")
@@ -80,10 +80,10 @@ func (t *processTable) Render(m *topModel, width int) string {
 		t.lastListContent = listContent
 	}
 
-	t.managedDetailsVP.SetWidth(width - width/2)
-	t.managedDetailsVP.SetHeight(managedHeight)
+	t.selectedDetailsVP.SetWidth(width - width/2)
+	t.selectedDetailsVP.SetHeight(managedHeight)
 	if t.lastDetailsContent != detailsContent {
-		t.managedDetailsVP.SetContent(detailsContent)
+		t.selectedDetailsVP.SetContent(detailsContent)
 		t.lastDetailsContent = detailsContent
 	}
 
@@ -92,7 +92,7 @@ func (t *processTable) Render(m *topModel, width int) string {
 	}
 
 	listView := t.managedListVP.View()
-	detailsView := t.managedDetailsVP.View()
+	detailsView := t.selectedDetailsVP.View()
 
 	return t.runningVP.View() + "\n" + managedHeader + "\n" + lipgloss.JoinHorizontal(lipgloss.Top, listView, detailsView)
 }
@@ -467,10 +467,91 @@ func (m *topModel) renderManagedList(width int, managed []*models.ManagedService
 	return strings.Join(lines, "\n")
 }
 
-func (m *topModel) renderManagedDetails(width int, managed []*models.ManagedService) string {
+func (m *topModel) renderSelectedServiceDetails(width int, visible []*models.ServerInfo, managed []*models.ManagedService) string {
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	header := headerStyle.Render("Selected service details")
 
+	// If focus is on running services, show details for the selected running service
+	if m.focus == focusRunning {
+		if m.selected < 0 || m.selected >= len(visible) {
+			placeholder := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("Select a running service to inspect details")
+			return header + "\n" + fitLine(placeholder, width)
+		}
+
+		srv := visible[m.selected]
+		var lines []string
+		lines = append(lines, fitLine(header, width))
+
+		// Service name
+		name := m.serviceNameFor(srv)
+		if name != "-" {
+			lines = append(lines, fitLine(fmt.Sprintf(" Name: %s", name), width))
+		}
+
+		// Source
+		if srv.Source != "" {
+			lines = append(lines, fitLine(fmt.Sprintf(" Source: %s", srv.Source), width))
+		}
+
+		// Status
+		if srv.Status != "" {
+			lines = append(lines, fitLine(fmt.Sprintf(" Status: %s", srv.Status), width))
+		}
+
+		// Process details
+		if srv.ProcessRecord != nil {
+			lines = append(lines, fitLine(fmt.Sprintf(" PID: %d", srv.ProcessRecord.PID), width))
+			if srv.ProcessRecord.Port > 0 {
+				lines = append(lines, fitLine(fmt.Sprintf(" Port: %d (%s)", srv.ProcessRecord.Port, srv.ProcessRecord.Protocol), width))
+			}
+			if srv.ProcessRecord.Command != "" {
+				lines = append(lines, fitLine(fmt.Sprintf(" Cmd: %s", srv.ProcessRecord.Command), width))
+			}
+			if srv.ProcessRecord.CWD != "" {
+				lines = append(lines, fitLine(fmt.Sprintf(" Dir: %s", srv.ProcessRecord.CWD), width))
+			}
+			if srv.ProcessRecord.ProjectRoot != "" {
+				lines = append(lines, fitLine(fmt.Sprintf(" Project: %s", srv.ProcessRecord.ProjectRoot), width))
+			}
+			if srv.ProcessRecord.StartTime != nil {
+				lines = append(lines, fitLine(fmt.Sprintf(" Started: %s", srv.ProcessRecord.StartTime.Format("2006-01-02 15:04:05")), width))
+			}
+			if srv.ProcessRecord.AgentTag != nil {
+				lines = append(lines, fitLine(fmt.Sprintf(" Agent: %s (%s)", srv.ProcessRecord.AgentTag.AgentName, srv.ProcessRecord.AgentTag.Source), width))
+			}
+		}
+
+		// Managed service reference
+		if srv.ManagedService != nil {
+			lines = append(lines, fitLine(fmt.Sprintf(" Managed: %s", srv.ManagedService.Name), width))
+		}
+
+		// Health check details
+		if srv.ProcessRecord != nil && srv.ProcessRecord.Port > 0 {
+			if d := m.healthDetails[srv.ProcessRecord.Port]; d != nil {
+				lines = append(lines, fitLine(fmt.Sprintf(" Health: %s (%dms) %s", health.StatusIcon(d.Status), d.ResponseMs, d.Message), width))
+			}
+		}
+
+		// Crash info
+		if srv.Status == "crashed" {
+			if srv.CrashReason != "" {
+				lines = append(lines, fitLine(fmt.Sprintf(" Headline: %s", srv.CrashReason), width))
+			}
+			for _, logLine := range nonEmptyTail(srv.CrashLogTail, 3) {
+				lines = append(lines, fitLine(" "+strings.TrimSpace(logLine), width))
+			}
+			if srv.ManagedService != nil {
+				if logPath, err := m.app.LatestServiceLogPath(srv.ManagedService.Name); err == nil && strings.TrimSpace(logPath) != "" {
+					lines = append(lines, fitLine(fmt.Sprintf(" Log: %s", logPath), width))
+				}
+			}
+		}
+
+		return strings.Join(lines, "\n")
+	}
+
+	// Otherwise, show details for the selected managed service
 	if m.managedSel < 0 || m.managedSel >= len(managed) {
 		placeholder := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("Select a managed service to inspect status")
 		return header + "\n" + fitLine(placeholder, width)
@@ -503,6 +584,17 @@ func (m *topModel) renderManagedDetails(width int, managed []*models.ManagedServ
 	}
 	if svc.Command != "" {
 		lines = append(lines, fitLine(fmt.Sprintf(" Cmd: %s", svc.Command), width))
+	}
+
+	// Show current process info if service is running
+	if srv := m.serverInfoForService(svc.Name); srv != nil && srv.ProcessRecord != nil {
+		lines = append(lines, fitLine(fmt.Sprintf(" PID: %d", srv.ProcessRecord.PID), width))
+		if srv.ProcessRecord.StartTime != nil {
+			lines = append(lines, fitLine(fmt.Sprintf(" Started: %s", srv.ProcessRecord.StartTime.Format("2006-01-02 15:04:05")), width))
+		}
+		if d := m.healthDetails[srv.ProcessRecord.Port]; d != nil {
+			lines = append(lines, fitLine(fmt.Sprintf(" Health: %s (%dms) %s", health.StatusIcon(d.Status), d.ResponseMs, d.Message), width))
+		}
 	}
 
 	if state == "crashed" {
@@ -555,7 +647,7 @@ func (t *processTable) updateViewportForTableY(viewportY int, viewportX int, msg
 			return cmd
 		}
 		var cmd tea.Cmd
-		t.managedDetailsVP, cmd = t.managedDetailsVP.Update(msg)
+		t.selectedDetailsVP, cmd = t.selectedDetailsVP.Update(msg)
 		return cmd
 	}
 	return nil
@@ -576,10 +668,10 @@ type rowColors struct {
 //   - confirmActive: a confirm modal is currently shown
 //
 // Priority (first match wins):
-//   1. Confirm target or selected+group during confirm → amber/orange (178/0)
-//   2. Focused select  → bright blue  (57/15)
-//   3. Group member    → dimmed orange (94) during confirm, blue (61) otherwise
-//   4. Unfocused select → gray         (8/15)
+//  1. Confirm target or selected+group during confirm → amber/orange (178/0)
+//  2. Focused select  → bright blue  (57/15)
+//  3. Group member    → dimmed orange (94) during confirm, blue (61) otherwise
+//  4. Unfocused select → gray         (8/15)
 func rowColorsFor(isFocusedPanel, isSelected, isConfirmTarget, isGroupMember, confirmActive bool) rowColors {
 	switch {
 	case isConfirmTarget || (confirmActive && isSelected && isGroupMember):
@@ -604,8 +696,8 @@ type managedRegion int
 
 const (
 	managedRegionList    managedRegion = iota // left pane: selectable items
-	managedRegionDetails                         // right pane: read-only details
-	managedRegionOutside                         // header separator or outside managed area
+	managedRegionDetails                      // right pane: read-only details
+	managedRegionOutside                      // header separator or outside managed area
 )
 
 func (t *processTable) managedClickRegion(managedViewportY, clickX int) managedRegion {
