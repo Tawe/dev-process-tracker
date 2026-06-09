@@ -385,6 +385,11 @@ func (m *topModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.mode == viewModeLogs {
 		if _, ok := msg.(tea.MouseClickMsg); ok {
+			// Check if click is on the copy icon in the header command line.
+			// Header is line 0 ("Logs: ..."), command is line 1 ("📋 cmd...").
+			if m.logCommand != "" && mouse.Y == 1 && mouse.X < 4 {
+				return m, tea.SetClipboard(m.logCommand)
+			}
 			return m.handleMouseClick(msg)
 		}
 		var cmd tea.Cmd

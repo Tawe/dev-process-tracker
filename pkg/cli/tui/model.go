@@ -129,6 +129,11 @@ type topModel struct {
 	// Toggle-based visual group selection (g key)
 	groupHighlightNamespace *string
 
+	// Command text available for clipboard copy in the current view.
+	logCommand         string
+	detailsCommand     string
+	detailsCmdLineIdx  int // 1-based line index of the Cmd line in the details pane (-1 if none)
+
 	// Render caches — invalidated by refresh(), sort changes, and filter changes.
 	cachedDisplayNames        []string
 	cachedDisplayNamesQuery   string
@@ -188,6 +193,7 @@ func newTopModel(app AppDeps) *topModel {
 		help:                 help.New(),
 		searchInput:          searchInput,
 		tableFollowSelection: true,
+		detailsCmdLineIdx:   -1,
 		serversVersion:       1,
 		servicesVersion:      1,
 	}

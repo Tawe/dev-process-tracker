@@ -162,6 +162,7 @@ func (m *topModel) logsHeaderView() string {
 	name := "-"
 	port := "-"
 	pid := "-"
+	cmd := ""
 	if m.logSvc != nil {
 		name = m.logSvc.Name
 		for _, srv := range m.servers {
@@ -178,6 +179,7 @@ func (m *topModel) logsHeaderView() string {
 		if port == "-" && len(m.logSvc.Ports) > 0 && m.logSvc.Ports[0] > 0 {
 			port = fmt.Sprintf("%d", m.logSvc.Ports[0])
 		}
+		cmd = m.logSvc.Command
 	} else if m.logPID > 0 {
 		pid = fmt.Sprintf("%d", m.logPID)
 		for _, srv := range m.servers {
@@ -188,6 +190,9 @@ func (m *topModel) logsHeaderView() string {
 				if srv.ManagedService != nil && srv.ManagedService.Name != "" {
 					name = srv.ManagedService.Name
 				}
+				if srv.ProcessRecord.Command != "" {
+					cmd = srv.ProcessRecord.Command
+				}
 				break
 			}
 		}
@@ -195,7 +200,14 @@ func (m *topModel) logsHeaderView() string {
 			name = fmt.Sprintf("pid:%d", m.logPID)
 		}
 	}
-	return fmt.Sprintf("Logs: %s | Port: %s | PID: %s", name, port, pid)
+	header := fmt.Sprintf("Logs: %s | Port: %s | PID: %s", name, port, pid)
+	if cmd != "" {
+		m.logCommand = cmd
+		header += "\n" + copyIcon + " " + cmd
+	} else {
+		m.logCommand = ""
+	}
+	return header
 }
 
 func (m *topModel) logsFooterView() string {

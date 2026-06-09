@@ -16,6 +16,9 @@ import (
 // pythonVersionedRe matches versioned python binaries: python3, python3.12, python2.7, etc.
 var pythonVersionedRe = regexp.MustCompile(`^python\d.*`)
 
+// copyIcon is the clipboard icon rendered next to copiable command text.
+const copyIcon = "⧉"
+
 func fixedCell(s string, width int) string {
 	if width <= 0 {
 		return ""
@@ -498,7 +501,13 @@ func (m *topModel) handleTableMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) 
 
 	switch m.table.managedClickRegion(managedViewportY, mouse.X) {
 	case managedRegionDetails:
-		// Details pane is view-only; consume the click without changing selection.
+		// Check if click is on the copy icon in the details Cmd line.
+		if m.detailsCommand != "" && m.detailsCmdLineIdx >= 0 {
+			absoluteDetailsLine := managedViewportY + m.table.selectedDetailsVP.YOffset()
+			if absoluteDetailsLine == m.detailsCmdLineIdx && mouse.X-m.table.lastListWidth < 4 {
+				return m, tea.SetClipboard(m.detailsCommand)
+			}
+		}
 		return m, nil
 	case managedRegionList:
 		// fall through to list selection below

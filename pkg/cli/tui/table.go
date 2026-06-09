@@ -471,6 +471,10 @@ func (m *topModel) renderSelectedServiceDetails(width int, visible []*models.Ser
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	header := headerStyle.Render("Selected service details")
 
+	// Reset details command on each render; will be set if a Cmd line is produced.
+	m.detailsCommand = ""
+	m.detailsCmdLineIdx = -1
+
 	// If focus is on running services, show details for the selected running service
 	if m.focus == focusRunning {
 		if m.selected < 0 || m.selected >= len(visible) {
@@ -505,7 +509,9 @@ func (m *topModel) renderSelectedServiceDetails(width int, visible []*models.Ser
 				lines = append(lines, fitLine(fmt.Sprintf(" Port: %d (%s)", srv.ProcessRecord.Port, srv.ProcessRecord.Protocol), width))
 			}
 			if srv.ProcessRecord.Command != "" {
-				lines = append(lines, fitLine(fmt.Sprintf(" Cmd: %s", srv.ProcessRecord.Command), width))
+				m.detailsCommand = srv.ProcessRecord.Command
+				m.detailsCmdLineIdx = len(lines)
+				lines = append(lines, fitLine(fmt.Sprintf(" %s Cmd: %s", copyIcon, srv.ProcessRecord.Command), width))
 			}
 			if srv.ProcessRecord.CWD != "" {
 				lines = append(lines, fitLine(fmt.Sprintf(" Dir: %s", srv.ProcessRecord.CWD), width))
@@ -583,7 +589,9 @@ func (m *topModel) renderSelectedServiceDetails(width int, visible []*models.Ser
 		lines = append(lines, fitLine(fmt.Sprintf(" Port: %s", formatPorts(svc.Ports)), width))
 	}
 	if svc.Command != "" {
-		lines = append(lines, fitLine(fmt.Sprintf(" Cmd: %s", svc.Command), width))
+		m.detailsCommand = svc.Command
+		m.detailsCmdLineIdx = len(lines)
+		lines = append(lines, fitLine(fmt.Sprintf(" %s Cmd: %s", copyIcon, svc.Command), width))
 	}
 
 	// Show current process info if service is running
