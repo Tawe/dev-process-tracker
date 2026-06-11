@@ -189,6 +189,23 @@ func (r *Registry) ClearServicePID(name string) error {
 	return r.save()
 }
 
+// UpdateServiceResolvedCommand records the OS-resolved command for a service.
+// This is the actual command visible via ps after the process starts, which may differ
+// from the declared command (e.g. "bunx vite" -> "node .../vite").
+func (r *Registry) UpdateServiceResolvedCommand(name, resolvedCommand string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	svc, exists := r.data.Services[name]
+	if !exists {
+		return fmt.Errorf("service %q not found", name)
+	}
+
+	svc.ResolvedCommand = resolvedCommand
+	svc.UpdatedAt = time.Now()
+	return r.save()
+}
+
 // save (internal) writes the registry without taking locks
 func (r *Registry) save() error {
 	dir := filepath.Dir(r.filePath)

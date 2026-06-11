@@ -46,7 +46,8 @@ type AgentTag struct {
 type ManagedService struct {
 	Name                 string           `json:"name"`
 	CWD                  string           `json:"cwd"`
-	Command              string           `json:"command"`
+	Command              string           `json:"command"`       // declared command (what we spawn)
+	ResolvedCommand      string           `json:"resolved_command,omitempty"` // actual command after OS resolution (what ps shows)
 	Ports                []int            `json:"ports"`
 	LastPID              *int             `json:"last_pid,omitempty"`
 	LastStart            *time.Time       `json:"last_start,omitempty"`

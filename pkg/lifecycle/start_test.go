@@ -115,6 +115,17 @@ func (m *mockDeps) GetProcessStartTime(pid int) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("process start time unavailable")
 }
 
+func (m *mockDeps) GetProcessCommand(pid int) (string, error) {
+	return "mock-command", nil
+}
+
+func (m *mockDeps) UpdateServiceResolvedCommand(name, resolvedCommand string) error {
+	if svc, ok := m.services[name]; ok {
+		svc.ResolvedCommand = resolvedCommand
+	}
+	return nil
+}
+
 func (m *mockDeps) ScanProcesses() ([]*models.ProcessRecord, error) {
 	if m.scanErr != nil {
 		return nil, m.scanErr

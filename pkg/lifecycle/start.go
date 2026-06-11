@@ -16,6 +16,7 @@ type Deps interface {
 	GetService(name string) *models.ManagedService
 	UpdateServicePID(name string, pid int) error
 	UpdateServiceProcessIdentity(name string, pid int, processStartTime time.Time) error
+	UpdateServiceResolvedCommand(name, resolvedCommand string) error
 	ClearServicePID(name string) error
 
 	// Process operations
@@ -23,6 +24,7 @@ type Deps interface {
 	StopProcess(pid int) error
 	IsRunning(pid int) bool
 	GetProcessStartTime(pid int) (time.Time, error)
+	GetProcessCommand(pid int) (string, error)
 
 	// Scanning
 	ScanProcesses() ([]*models.ProcessRecord, error)
@@ -162,6 +164,13 @@ func StartService(deps Deps, svc *models.ManagedService) Result {
 			Message: fmt.Sprintf("Success: started %q (PID %d), but failed to update registry: %v", svc.Name, pid, err),
 			PID:     pid,
 		}
+	}
+
+	// Capture the OS-resolved command for future identity matching.
+	// This learns the mapping from "bunx vite" -> "node .../vite" once,
+	// then uses it for all subsequent reconciles.
+	if resolvedCmd, err := deps.GetProcessCommand(pid); err == nil && resolvedCmd != "" {
+		_ = deps.UpdateServiceResolvedCommand(svc.Name, resolvedCmd)
 	}
 
 	portMsg := ""

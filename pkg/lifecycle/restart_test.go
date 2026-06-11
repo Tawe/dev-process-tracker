@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -332,5 +333,50 @@ func TestRestart_CrashedService(t *testing.T) {
 	// Crashed service should be treated as fresh start
 	if result.Outcome != OutcomeSuccess {
 		t.Errorf("restart of crashed service should succeed as fresh start, got %q: %s", result.Outcome, result.Message)
+	}
+}
+
+func TestRestart_BlockOnPortConflictAfterStoppingWrongPID(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	oldPID := 4000
+	conflictPID := 5000
+	svc := &models.ManagedService{
+		Name:                 "api",
+		CWD:                  tmpDir,
+		Command:              "npm start",
+		LastPID:              &oldPID,
+		LastProcessStartTime: nil,
+		Ports:                []int{3000},
+		Readiness: &models.ReadinessConfig{
+			Mode:    models.ReadinessProcessOnly,
+			Timeout: 1,
+		},
+	}
+
+	// Old PID is still running but not bound to service port.
+	// Another process owns the service port; restart should block instead of starting on fallback.
+	deps := newMockDeps()
+	deps.services["api"] = svc
+	deps.processes = []*models.ProcessRecord{
+		{PID: oldPID, CWD: tmpDir, Port: 4000},
+		{PID: conflictPID, CWD: tmpDir, Port: 3000},
+	}
+	deps.runningPIDs[oldPID] = true
+	deps.runningPIDs[conflictPID] = true
+
+	result := RestartService(deps, svc)
+	if result.Outcome != OutcomeBlocked {
+		t.Fatalf("restart with stale owner on service port should be blocked, got %q: %s", result.Outcome, result.Message)
+	}
+	if !strings.Contains(result.Message, "port 3000 is in use") {
+		t.Fatalf("expected port-conflict message, got %q", result.Message)
+	}
+	if deps.IsRunning(oldPID) {
+		t.Fatal("stop should attempt to stop the reconciled old PID before blocking")
+	}
+	if result.Message == "" {
+		t.Fatal("blocked restart should include a message")
 	}
 }

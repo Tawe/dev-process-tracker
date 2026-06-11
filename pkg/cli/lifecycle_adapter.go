@@ -50,6 +50,14 @@ func (d *appDeps) GetProcessStartTime(pid int) (time.Time, error) {
 	return d.app.processManager.GetProcessStartTime(pid)
 }
 
+func (d *appDeps) GetProcessCommand(pid int) (string, error) {
+	return d.app.processManager.GetProcessCommand(pid)
+}
+
+func (d *appDeps) UpdateServiceResolvedCommand(name, resolvedCommand string) error {
+	return d.app.registry.UpdateServiceResolvedCommand(name, resolvedCommand)
+}
+
 func (d *appDeps) ScanProcesses() ([]*models.ProcessRecord, error) {
 	processes, err := d.app.scanner.ScanListeningPorts()
 	if err != nil {

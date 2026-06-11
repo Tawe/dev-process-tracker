@@ -155,6 +155,18 @@ func (m *Manager) GetProcessStartTime(pid int) (time.Time, error) {
 	return getProcessStartTime(pid)
 }
 
+// GetProcessCommand returns the OS-reported command line for a live process.
+// This is the resolved form after OS interpretation (e.g. "bunx vite" -> "node .../vite").
+func (m *Manager) GetProcessCommand(pid int) (string, error) {
+	if pid <= 0 {
+		return "", fmt.Errorf("invalid pid: %d", pid)
+	}
+	if !m.IsRunning(pid) {
+		return "", fmt.Errorf("process %d is not running", pid)
+	}
+	return getProcessCommand(pid)
+}
+
 // createLogFile creates a new log file for a service
 func (m *Manager) createLogFile(serviceName string) (*os.File, error) {
 	// Create service log directory

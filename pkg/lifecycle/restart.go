@@ -89,18 +89,25 @@ func RestartService(deps Deps, svc *models.ManagedService) Result {
 		_ = deps.ClearServicePID(svc.Name)
 	}
 
-	// Wait briefly for resources (ports) to be released after stopping old instance
+	// Wait briefly for resources to be released after stopping old instance
 	if hadOldInstance {
 		portReleasePause()
 	}
 
-	// Preflight checks — when we just stopped the old instance, skip port conflict
-	// checks for the service's own declared ports (they may not be freed yet).
-	processesAfterStop, _ := deps.ScanProcesses()
-	if err := preflightCheckForRestart(svc, processesAfterStop); err != nil {
-		outcome := OutcomeBlocked
-		if !isPortConflict(err) {
-			outcome = OutcomeInvalid
+	// Re-scan live processes after stop and require the declared ports to be clear.
+	// This prevents "restart" from succeeding while the old service keeps the same
+	// port and a new process is auto-bound to a fallback port.
+	processesAfterStop, err := deps.ScanProcesses()
+	if err != nil {
+		return Result{
+			Outcome: OutcomeFailed,
+			Message: fmt.Sprintf("Failed: could not scan live processes for %q: %v", svc.Name, err),
+		}
+	}
+	if err := preflightCheck(svc, processesAfterStop); err != nil {
+		outcome := OutcomeInvalid
+		if isPortConflict(err) {
+			outcome = OutcomeBlocked
 		}
 		return Result{
 			Outcome: outcome,
@@ -184,6 +191,11 @@ func RestartService(deps Deps, svc *models.ManagedService) Result {
 		}
 	}
 
+	// Capture the OS-resolved command for future identity matching.
+	if resolvedCmd, err := deps.GetProcessCommand(newPID); err == nil && resolvedCmd != "" {
+		_ = deps.UpdateServiceResolvedCommand(svc.Name, resolvedCmd)
+	}
+
 	// Format message based on whether we had an old instance
 	var message string
 	if hadOldInstance {
@@ -205,14 +217,6 @@ func RestartService(deps Deps, svc *models.ManagedService) Result {
 		Message: message,
 		PID:     newPID,
 	}
-}
-
-// preflightCheckForRestart runs CWD and command validation but skips port
-// conflict checks. During restart, the service's own ports may not be freed
-// yet after stopping the old instance, and we don't want to falsely report
-// a conflict.
-func preflightCheckForRestart(svc *models.ManagedService, _ []*models.ProcessRecord) error {
-	return preflightCheck(svc, nil)
 }
 
 // portReleasePause waits briefly for the OS to release resources

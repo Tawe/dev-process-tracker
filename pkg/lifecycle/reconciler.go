@@ -139,6 +139,13 @@ func isAmbiguousWithResolver(
 			}
 		}
 
+		// If this process is on a port that no managed service declares,
+		// and the current service has its own declared ports, the process
+		// is irrelevant noise — it cannot be a duplicate of this service.
+		if proc.Port > 0 && portCount[proc.Port] == 0 && len(svc.Ports) > 0 {
+			continue
+		}
+
 		// CWD match but not unique
 		if svcCWD != "" && procCWD == svcCWD && cwdCount[svcCWD] > 1 {
 			return true

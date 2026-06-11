@@ -62,3 +62,12 @@ func getProcessStartTime(pid int) (time.Time, error) {
 
 	return time.Time{}, fmt.Errorf("%w: cannot parse %q for pid %d", ErrProcessStartTimeUnavailable, raw, pid)
 }
+
+func getProcessCommand(pid int) (string, error) {
+	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("ps command for pid %d: %v", pid, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
