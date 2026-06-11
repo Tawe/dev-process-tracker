@@ -317,25 +317,33 @@ func (m *topModel) executeConfirm(yes bool) tea.Cmd {
 		m.groupHighlightNamespace = nil
 		m.executeGroupConfirm(c)
 	case confirmStopPID:
-		if err := m.app.StopProcess(c.pid, 5*time.Second); err != nil {
-			if errors.Is(err, process.ErrNeedSudo) {
-				m.openConfirmModal(&confirmState{kind: confirmSudoKill, prompt: fmt.Sprintf("Run sudo kill -9 %d now?", c.pid), pid: c.pid})
-				return nil
-			}
-			if isProcessFinishedErr(err) {
-				m.cmdStatus = fmt.Sprintf("Process %d already exited", c.pid)
-				if c.serviceName != "" {
+		if c.serviceName != "" {
+			// Managed service stop: go through lifecycle layer so it
+			// reconciles the live PID instead of trusting registry LastPID.
+			if err := m.app.StopService(c.serviceName); err != nil {
+				if isProcessFinishedErr(err) {
+					m.cmdStatus = fmt.Sprintf("%q already exited", c.serviceName)
 					_ = m.app.ClearServicePID(c.serviceName)
+				} else {
+					m.cmdStatus = err.Error()
 				}
 			} else {
-				m.cmdStatus = err.Error()
+				m.cmdStatus = fmt.Sprintf("Stopped %q", c.serviceName)
 			}
 		} else {
-			m.cmdStatus = fmt.Sprintf("Stopped PID %d", c.pid)
-			if c.serviceName != "" {
-				if clrErr := m.app.ClearServicePID(c.serviceName); clrErr != nil {
-					m.cmdStatus = fmt.Sprintf("Stopped PID %d (warning: %v)", c.pid, clrErr)
+			// Raw process stop (discovered list, no managed service).
+			if err := m.app.StopProcess(c.pid, 5*time.Second); err != nil {
+				if errors.Is(err, process.ErrNeedSudo) {
+					m.openConfirmModal(&confirmState{kind: confirmSudoKill, prompt: fmt.Sprintf("Run sudo kill -9 %d now?", c.pid), pid: c.pid})
+					return nil
 				}
+				if isProcessFinishedErr(err) {
+					m.cmdStatus = fmt.Sprintf("Process %d already exited", c.pid)
+				} else {
+					m.cmdStatus = err.Error()
+				}
+			} else {
+				m.cmdStatus = fmt.Sprintf("Stopped PID %d", c.pid)
 			}
 		}
 	case confirmRemoveService:
@@ -384,6 +392,19 @@ func (m topModel) healthCmd() tea.Cmd {
 			details[srv.ProcessRecord.Port] = check
 		}
 		return healthMsg{icons: icons, details: details}
+	}
+}
+
+func (m topModel) memoryCmd() tea.Cmd {
+	visible := m.visibleServers()
+	return func() tea.Msg {
+		pids := make([]int, 0, len(visible))
+		for _, srv := range visible {
+			if srv.ProcessRecord != nil && srv.ProcessRecord.PID > 0 {
+				pids = append(pids, srv.ProcessRecord.PID)
+			}
+		}
+		return memoryMsg{memory: m.app.GetProcessMemory(pids)}
 	}
 }
 
