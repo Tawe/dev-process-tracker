@@ -67,3 +67,7 @@ func (a tuiAdapter) TailProcessLogs(pid int, lines int) ([]string, error) {
 func (a tuiAdapter) LatestServiceLogPath(name string) (string, error) {
 	return a.app.processManager.LatestLogPath(name)
 }
+
+func (a tuiAdapter) GetProcessMemory(pids []int) map[int]int64 {
+	return a.app.resourceCollector.CollectMemory(pids)
+}

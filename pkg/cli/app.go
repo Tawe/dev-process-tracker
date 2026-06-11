@@ -13,6 +13,7 @@ import (
 	"github.com/devports/devpt/pkg/models"
 	"github.com/devports/devpt/pkg/process"
 	"github.com/devports/devpt/pkg/registry"
+	"github.com/devports/devpt/pkg/resource"
 	"github.com/devports/devpt/pkg/scanner"
 )
 
@@ -25,10 +26,11 @@ type App struct {
 	scanner        *scanner.ProcessScanner
 	resolver       *scanner.ProjectResolver
 	detector       *scanner.AgentDetector
-	processManager *process.Manager
-	healthChecker  *health.Checker
-	stdout         io.Writer
-	stderr         io.Writer
+	processManager   *process.Manager
+	healthChecker    *health.Checker
+	resourceCollector *resource.Collector
+	stdout           io.Writer
+	stderr           io.Writer
 }
 
 // NewApp creates and initializes the application
@@ -60,10 +62,11 @@ func NewApp() (*App, error) {
 		scanner:        scanner.NewProcessScanner(),
 		resolver:       scanner.NewProjectResolver(),
 		detector:       scanner.NewAgentDetector(),
-		processManager: process.NewManager(config.LogsDir),
-		healthChecker:  health.NewChecker(0),
-		stdout:         os.Stdout,
-		stderr:         os.Stderr,
+		processManager:   process.NewManager(config.LogsDir),
+		healthChecker:    health.NewChecker(0),
+		resourceCollector: resource.NewCollector(),
+		stdout:           os.Stdout,
+		stderr:           os.Stderr,
 	}, nil
 }
 

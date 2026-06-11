@@ -104,6 +104,10 @@ type topModel struct {
 	healthLast       time.Time
 	healthChk        *health.Checker
 
+	memory     map[int]int64 // PID → RSS in KB
+	memoryBusy bool
+	memoryLast time.Time
+
 	sortBy      sortMode
 	sortReverse bool
 	lastSortBy  sortMode // track last sorted column for 3-state cycle
@@ -156,6 +160,10 @@ type healthMsg struct {
 	err     error
 }
 
+type memoryMsg struct {
+	memory map[int]int64 // PID → RSS KB
+}
+
 func Run(app AppDeps) error {
 	model := newTopModel(app)
 	p := tea.NewProgram(model)
@@ -186,6 +194,7 @@ func newTopModel(app AppDeps) *topModel {
 		health:               make(map[int]string),
 		healthDetails:        make(map[int]*health.HealthCheck),
 		healthChk:            health.NewChecker(800 * time.Millisecond),
+		memory:               make(map[int]int64),
 		sortBy:               sortRecent,
 		starting:             make(map[string]time.Time),
 		removed:              make(map[string]*models.ManagedService),

@@ -7,7 +7,7 @@ Dev Process Tracker (`devpt`) tracks and controls local dev services.
 ## What it does
 
 - Opens an interactive TUI by default (`devpt`)
-- Shows running services with name, port, pid, project, command, and health
+- Shows running services with name, port, pid, project, command, health, and memory usage
 - Tracks managed services you register with `devpt add`
 - Lets you start, restart, stop, remove, and inspect services
 - Provides logs for managed services and best-effort logs for unmanaged processes

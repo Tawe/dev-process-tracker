@@ -13,6 +13,7 @@ import (
 
 	"github.com/devports/devpt/pkg/health"
 	"github.com/devports/devpt/pkg/models"
+	"github.com/devports/devpt/pkg/resource"
 )
 
 type processTable struct {
@@ -508,6 +509,14 @@ func (m *topModel) renderSelectedServiceDetails(width int, visible []*models.Ser
 			if srv.ProcessRecord.Port > 0 {
 				lines = append(lines, fitLine(fmt.Sprintf(" Port: %d (%s)", srv.ProcessRecord.Port, srv.ProcessRecord.Protocol), width))
 			}
+			if kb, ok := m.memory[srv.ProcessRecord.PID]; ok && kb > 0 {
+				memText := resource.FormatMemory(kb)
+				memColor := resource.MemoryColor(kb)
+				if memColor != "" {
+					memText = lipgloss.NewStyle().Foreground(lipgloss.Color(memColor)).Render(memText)
+				}
+				lines = append(lines, fitLine(fmt.Sprintf(" Memory: %s", memText), width))
+			}
 			if srv.ProcessRecord.Command != "" {
 				m.detailsCommand = srv.ProcessRecord.Command
 				m.detailsCmdLineIdx = len(lines)
@@ -599,6 +608,14 @@ func (m *topModel) renderSelectedServiceDetails(width int, visible []*models.Ser
 		lines = append(lines, fitLine(fmt.Sprintf(" PID: %d", srv.ProcessRecord.PID), width))
 		if srv.ProcessRecord.StartTime != nil {
 			lines = append(lines, fitLine(fmt.Sprintf(" Started: %s", srv.ProcessRecord.StartTime.Format("2006-01-02 15:04:05")), width))
+		}
+		if kb, ok := m.memory[srv.ProcessRecord.PID]; ok && kb > 0 {
+			memText := resource.FormatMemory(kb)
+			memColor := resource.MemoryColor(kb)
+			if memColor != "" {
+				memText = lipgloss.NewStyle().Foreground(lipgloss.Color(memColor)).Render(memText)
+			}
+			lines = append(lines, fitLine(fmt.Sprintf(" Memory: %s", memText), width))
 		}
 		if d := m.healthDetails[srv.ProcessRecord.Port]; d != nil {
 			lines = append(lines, fitLine(fmt.Sprintf(" Health: %s (%dms) %s", health.StatusIcon(d.Status), d.ResponseMs, d.Message), width))

@@ -101,3 +101,14 @@ func (f *fakeAppDeps) LatestServiceLogPath(name string) (string, error) {
 	}
 	return "", fmt.Errorf("no logs for %q", name)
 }
+
+func (f *fakeAppDeps) GetProcessMemory(pids []int) map[int]int64 {
+	result := make(map[int]int64, len(pids))
+	for _, pid := range pids {
+		// Return a plausible value for known test PIDs
+		if pid == 1001 {
+			result[pid] = 128 * 1024 // 128 MB
+		}
+	}
+	return result
+}

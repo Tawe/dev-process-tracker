@@ -27,11 +27,16 @@ func (m *topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == viewModeLogs && m.followLogs {
 			return m, m.tailLogsCmd()
 		}
+		cmds := []tea.Cmd{tickCmd()}
 		if m.mode == viewModeTable && !m.healthBusy && time.Since(m.healthLast) > 2*time.Second && time.Since(m.lastInput) > 900*time.Millisecond {
 			m.healthBusy = true
-			return m, m.healthCmd()
+			cmds = append(cmds, m.healthCmd())
 		}
-		return m, tickCmd()
+		if m.mode == viewModeTable && !m.memoryBusy && time.Since(m.memoryLast) > 2*time.Second && time.Since(m.lastInput) > 900*time.Millisecond {
+			m.memoryBusy = true
+			cmds = append(cmds, m.memoryCmd())
+		}
+		return m, tea.Batch(cmds...)
 	case logMsg:
 		m.handleLogMsg(msg)
 		return m, tickCmd()
@@ -42,7 +47,14 @@ func (m *topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.healthDetails = msg.details
 			m.healthLast = time.Now()
 		}
-		return m, tickCmd()
+		return m, nil
+	case memoryMsg:
+		m.memoryBusy = false
+		if msg.memory != nil {
+			m.memory = msg.memory
+			m.memoryLast = time.Now()
+		}
+		return m, nil
 	}
 
 	if m.mode == viewModeLogs || m.mode == viewModeLogsDebug {

@@ -33,6 +33,7 @@ go test -v ./pkg/cli -run TestWarnLegacyManagedCommands
 - **pkg/process/** - Process lifecycle management: spawning, log capture, graceful shutdown.
 - **pkg/models/** - Core data structures (ProcessRecord, ManagedService, AgentTag) and config paths.
 - **pkg/health/** - Health check utilities (basic placeholder for future expansion).
+- **pkg/resource/** - Runtime resource metrics (memory RSS) via batch `ps` calls.
 
 ## Architecture Overview
 
@@ -42,13 +43,22 @@ go test -v ./pkg/cli -run TestWarnLegacyManagedCommands
 3. **Detector** analyzes parent process/env to identify AI-agent-started servers
 4. **Registry** (`pkg/registry`) manages user-registered managed services (JSON at ~/.config/devpt/registry.json)
 5. **Process Manager** (`pkg/process`) handles spawning, stopping, and log capture
-6. **CLI/TUI** presents the unified list and command interface
+6. **Resource Collector** (`pkg/resource`) fetches runtime metrics (memory) via batch `ps` calls
+7. **Health Checker** (`pkg/health`) probes ports for responsiveness
+8. **CLI/TUI** presents the unified list and command interface
 
 ### Key Models
 - **ProcessRecord**: Discovered listening process (PID, port, command, project root, agent detection)
 - **ManagedService**: User-registered service (name, cwd, command, ports, timestamps)
 - **AgentTag**: Detection result (source, agent name, confidence level)
 - **Registry**: Container for all managed services (versioned JSON format)
+
+### Runtime Observations
+Memory and health are runtime observations, separate from discovery data:
+- Fetched asynchronously in the TUI update loop (every 2s when idle)
+- Stored in TUI model maps keyed by PID (memory) or port (health)
+- Not persisted — they reflect current state only
+- Batch collection via `ps -p <pids> -o pid=,rss=` — returns KB for each PID
 
 ### Command Routing
 Entry point (cmd/devpt/main.go) routes commands:
@@ -98,7 +108,9 @@ Cache can be invalidated selectively. Important for performance (lsof calls are 
 
 ### Test Locations
 - **pkg/cli/**: app_warning_test.go (TestWarnLegacyManagedCommands), command_validation_test.go (TestValidateManagedCommand, TestFirstBlockedShellPattern) - 3 tests total
-- **pkg/process/**: manager_parse_test.go (TestParseCommandArgs, TestParseCommandArgs_UnterminatedQuote) - 2 tests total
+- **pkg/process/**: manager_parse_test.go (TestParseCommandArgs, TestParseCommandArgs_UnterminatedQuote), starttime_test.go - 4 tests total
+- **pkg/resource/**: memory_test.go (TestFormatMemory, TestMemoryColor, TestCollectMemory*) - 6 tests total
+- **pkg/cli/tui/**: memory_test.go (TestDetailsPane_MemoryDisplay, TestMemoryMsg_UpdatesMemoryMap), plus 40+ other TUI tests
 
 ### Test Patterns
 - Table-driven tests for command parsing and validation

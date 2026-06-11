@@ -21,4 +21,8 @@ type AppDeps interface {
 	TailServiceLogs(name string, lines int) ([]string, error)
 	TailProcessLogs(pid int, lines int) ([]string, error)
 	LatestServiceLogPath(name string) (string, error)
+
+	// GetProcessMemory returns RSS memory in KB for each live PID.
+	// Dead or inaccessible PIDs are silently omitted.
+	GetProcessMemory(pids []int) map[int]int64
 }
