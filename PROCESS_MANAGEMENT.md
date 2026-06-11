@@ -48,15 +48,36 @@ Unless the system introduces persisted operation records, command phase is not d
 
 A service must never be identified by PID alone.
 
-Identity must be verified using:
+Identity must be verified using an ordered evidence chain:
 
-- PID
-- Process start time when available
-- Declared port ownership
-- Command fingerprint
-- Working directory or project root
+1. **PID + start time** — definitive after confirmed start
+1b. **Stored LastPID + path corroboration** — strong, even without start time
+2. **Declared port** — primary runtime signal for services that declare one
+3. **CWD + resolved command** — grouping key for discovering related processes
+4. **Exact CWD match** — fallback for portless services with unique CWDs
+5. **Exact project root match** — fallback for portless services with unique roots
+
+Additionally, the system captures a **resolved command** at spawn time — the actual
+command visible via `ps` after the OS interprets the declared command. For example,
+`bunx vite` resolves to `node .../node_modules/.bin/vite`. This learned mapping enables
+reliable runtime identity matching without fuzzy heuristics.
 
 If PID reuse is possible and identity cannot be proven, the service must be treated as **unknown**, not **running**.
+
+#### Shared-CWD Services
+
+Multiple services sharing the same CWD (e.g., backend, frontend, preview from the same project) is a first-class scenario. In this case, **port** is the primary distinguishing signal. Services without declared ports in a shared-CWD must have unique commands or risk being classified as `unknown`.
+
+#### Identity Groups (Target Architecture)
+
+The system is evolving toward a **service group** model where processes sharing CWD + resolved command are grouped together:
+
+| Member | Match | Meaning |
+|--------|-------|---------|
+| **Primary** | Declared port match | The tracked instance |
+| **Related** | Same CWD+command, different port | Sibling process (orphan, duplicate) |
+| **Conflict** | Declared port held by process outside group | Someone else using our port |
+| **Untracked** | Doesn't match any group | Not our concern |
 
 ### 1.4 Operation Ownership
 
@@ -198,21 +219,24 @@ Write registry metadata only after a fact has been confirmed:
 
 Identity verification must use ordered evidence, not ad hoc matching.
 
-Preferred evidence order:
+Evidence chain (ordered by strength):
 
-1. exact working directory match
-2. exact project root match
-3. declared port owned by exactly one plausible managed service
-4. stored PID plus matching path evidence
-5. command fingerprint as a supporting signal, never as sole proof
+1. **PID + start time**: stored PID matches a live process with the same OS-reported start time
+1b. **Stored LastPID + path corroboration**: stored PID matches a live process whose CWD or project root matches
+2. **Declared port**: a uniquely-declared port matches a live process, with CWD/root as corroboration (not requirement)
+3. **CWD + resolved command**: both working directory and the OS-resolved command match
+4. **Exact CWD match**: working directory matches and is unique among all managed services
+5. **Exact project root match**: project root matches and is unique among all managed services
 
 Verification rules:
 
 - at least one path-based or uniquely-owned port-based signal must exist
 - PID alone is never sufficient
 - command string alone is never sufficient
+- stored LastPID with path corroboration takes precedence over port matching — a previously confirmed identity is more reliable than a port match which could be a conflict
 - if multiple managed services remain plausible after matching, classify as `unknown`
 - if evidence conflicts, prefer safety over convenience and classify as `unknown`
+- a process on a port that no managed service declares is irrelevant and must not poison identity checks
 
 ---
 
@@ -260,6 +284,12 @@ Before any fork:
 Preflight failures caused by invalid service definition return `invalid`.
 
 Preflight failures caused by external contention, such as port conflicts, return `blocked`.
+
+### 4.3.1 Resolved Command Capture
+
+After a successful start, the system reads the OS-reported command line from the spawned process (`ps -p <PID> -o command=`) and stores it as `resolved_command` in the registry. This learned mapping (e.g., `bunx vite` → `node .../vite`) enables reliable identity matching during future reconciles without fuzzy heuristics.
+
+The declared command is used for spawning. The resolved command is used for identity only.
 
 ### 4.4 Readiness Policy
 
@@ -387,6 +417,9 @@ flowchart TD
 - if the old instance is already gone, clean stale metadata and continue
 - if start fails after stop succeeds, report that the service is now stopped, not running
 - if the service was already stopped, the operator-facing message must say that restart resolved as a fresh start
+- restart must run the same preflight checks as start — declared ports must be free before spawning
+- if a declared port is held by another process after stopping the old instance, return `blocked` with the conflict details
+- never silently accept a process on a fallback port as a successful restart
 
 ### 6.3 Freshness Rule
 
@@ -499,5 +532,8 @@ Good:
 - never hide stale metadata cleanup
 - never let concurrent operations mutate the same service without a lock
 - never present transient command phase as durable service state unless operation records exist
+- never silently accept a process on the wrong port as the managed instance
+- never skip port preflight checks during restart
+- never let a process on an undeclared port block identity checks for services with declared ports
 
 These rules exist to protect operator trust. Once the tool lies about lifecycle state, every downstream command becomes unreliable.
