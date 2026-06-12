@@ -12,6 +12,8 @@ Dev Process Tracker (`devpt`) tracks and controls local dev services.
 - Lets you start, restart, stop, remove, and inspect services
 - Provides logs for managed services and best-effort logs for unmanaged processes
 - Marks managed services as `crashed` when they exit unexpectedly and shows an inferred crash reason
+- Displays per-process memory usage in the details pane with color-coded thresholds
+- Shows a universal details pane for both running and managed services when selected
 
 ## Install
 
@@ -143,6 +145,9 @@ devpt --version
 
 - Running services are shown in the top table. The active sort column header is bold.
 - Managed services are shown in a separate section below with the total count in the section title.
+- A universal details pane on the right shows information for whichever service is currently selected (running or managed).
+- Memory usage is displayed per-process in the details pane with color-coded thresholds (gray <50MB, default <200MB, yellow <500MB, orange <1GB, red >1GB).
+- A copy-to-clipboard icon (⧉) appears next to command text in logs and the details pane.
 - Filter state lives in the footer help row:
   - default: `/ filter`
   - editing: `/ >query`

@@ -51,46 +51,49 @@
 ### devpt-cli / ROLLOUT / VERIFIED
 
 - Action: Build and verify version output
-- Signal: `devpt version 0.2.2` (via `./devpt --version`)
+- Signal: `devpt version 0.5.0` (via `./devpt --version`)
 - Constraints: No hot reload; requires full rebuild
 - See: `.github/copilot-instructions.md` → Quick Reference for build commands
 
 ### devpt-cli / TEST / VERIFIED
 
 - Action: Run test suite
-- Signal: `ok` for each package; coverage 39.3% (cli), 59.1% (tui)
-- Constraints: Tests in `pkg/cli/*_test.go`, `pkg/cli/tui/*_test.go`, `pkg/process/*_test.go`
-  - `tui_state_test.go`: Model state transitions (5 tests)
-  - `tui_ui_test.go`: UI rendering verification (23 tests, 51 subtests)
-  - `tui_key_input_test.go`: Key input handling
-  - `tui_viewport_test.go`: Viewport scrolling tests
-  - `app_batch_test.go`: Batch operations
-  - `app_matching_test.go`: Pattern matching
-  - `command_validation_test.go`: Command validation
-  - `manager_parse_test.go`: Process command parsing (2 tests)
+- Signal: `ok` for each package; tests across 8 packages (~20s total)
+- Constraints: Tests in `pkg/cli/*_test.go`, `pkg/cli/tui/*_test.go`, `pkg/lifecycle/*_test.go`, `pkg/process/*_test.go`, `pkg/resource/*_test.go`, `pkg/scanner/*_test.go`, `pkg/registry/*_test.go`, `pkg/models/*_test.go`
+  - `pkg/cli/tui/`: 12 test files covering UI rendering, key input, state, viewports, memory, namespaces, OSC8, group color
+  - `pkg/cli/`: 10 test files covering commands, patterns, batch, status, display
+  - `pkg/lifecycle/`: 11 test files covering identity, reconciliation, start/stop/restart, readiness, locking, outcomes
+  - `pkg/resource/`: memory formatting and collection tests
+  - `pkg/process/`: command parsing and start time tests
+  - `pkg/registry/`: CRUD and persistence tests
+  - `pkg/scanner/`: discovery tests
+  - `pkg/models/`: lifecycle model tests
 - See: `.github/copilot-instructions.md` → Testing section for commands
 
 ### devpt-cli / TEST / UI VERIFICATION
 
 - Action: Run UI rendering tests
-- Signal: `PASS` for all 23 tests covering:
+- Signal: `PASS` for all UI rendering tests covering:
   - Escape sequences (screen clear, ANSI codes)
   - Layout structure (table headers, columns, dividers, footer-based filter state)
   - Responsive design (widths 40-200 chars, heights 10-100 lines)
   - All view modes (table, logs, command, search, help, confirm)
   - Footer content (keybindings, live filter rendering, status)
+  - Namespace display, group color logic, OSC8 hyperlinks
 - Constraints:
   - Tests verify rendered content, not specific ANSI colors
   - Footer assertions tolerate wrapping
   - No external deps beyond `testify/assert`
-  - Focused command for current UI work: `go test -mod=mod ./pkg/cli/tui ./pkg/cli`
+  - focused command for current UI work: `go test -mod=mod ./pkg/cli/tui ./pkg/cli`
+  - lifecycle tests: `go test -v ./pkg/lifecycle`
 
 ### devpt-cli / OBSERVE / TUI INTERACTIONS / VERIFIED
 
 - Action: `./devpt`
 - Signal:
-  - top table shows running services
+  - top table shows running services with health and memory indicators
   - lower section shows `Managed Services (<count>)`
+  - right-side details pane shows info for selected service (running or managed)
   - `/` activates inline footer filter editing
   - `?` opens a centered help modal
   - logs view header is `Logs: <service> | Port: <port> | PID: <pid>`
@@ -153,6 +156,34 @@
   ```
 - Signal: `[go-basic] listening on http://localhost:3400`
 - Constraints: Runs in foreground; use with `&` for background execution
+
+---
+
+## Runtime: `pkg/lifecycle` (Service Lifecycle)
+
+| Field      | Value                                          |
+|------------|------------------------------------------------|
+| `id`       | lifecycle                                      |
+| `class`    | backend / orchestration                        |
+| `entry`    | `pkg/lifecycle/manager.go`                     |
+| `owner`    | devpt-cli                                      |
+| `observe`  | Service identity verification, status outcomes |
+| `control`  | Via devpt-cli: start/stop/restart              |
+| `inject`   | `go test ./pkg/lifecycle`                      |
+| `rollout`  | Rebuild + restart via devpt                    |
+| `test`     | 11 test files covering all lifecycle flows     |
+
+### lifecycle / IDENTITY / VERIFIED
+
+- Action: Start a service, then verify identity chain
+- Signal: Service correctly identified via ordered evidence (PID+time → port → CWD+command → CWD)
+- Constraints: See PROCESS_MANAGEMENT.md §3.4 for full algorithm
+
+### lifecycle / RECONCILIATION / VERIFIED
+
+- Action: Stop a service externally, then run reconcile
+- Signal: Service transitions from `running` to `crashed` or `stopped`
+- Constraints: Reconciler checks live state before any mutation
 
 ---
 

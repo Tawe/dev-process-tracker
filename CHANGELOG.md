@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0
+
+- Added resolved command capture at spawn time so the system learns the OS-interpreted command (e.g., `bunx vite` → `node .../vite`) for reliable identity matching
+- Added process start time to the identity evidence chain so PID reuse is detected safely
+- Added universal details pane so selecting a running service shows its full details alongside managed services
+- Added per-process memory display in the details pane with color-coded thresholds so resource usage is visible at a glance
+- Added copy-to-clipboard icon next to command text in logs and details pane
+- Fixed TUI managed stop to route through the lifecycle layer instead of raw PID calls so "invalid pid: 0" no longer occurs on stale registry entries
+- Fixed TUI restart/stop routing so keyboard shortcuts target managed services when the managed list has focus
+- Fixed scanner to recognize versioned Python binaries (e.g., `python3.12`) in runtime command checks
+- Refactored identity matching to use an ordered evidence chain (PID+time → port → CWD+command → CWD → root) for shared-CWD correctness
+- Refactored TUI row color logic into a shared source of truth across running table and managed list
+- Updated PROCESS_MANAGEMENT.md with identity architecture, resolved command capture, restart preflight rules, and non-negotiable rules
+
 ## 0.4.2
 
 - Fixed port-bound readiness timeout so services like Open WebUI that take 10–15s to bind their port are no longer falsely marked unhealthy

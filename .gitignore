@@ -32,3 +32,4 @@ coverage.html
 /sandbox/servers/*/*/node
 /sandbox/servers/*/*/server.js
 /.claude/settings.local.json
+wireframe*.*
