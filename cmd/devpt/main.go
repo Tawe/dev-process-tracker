@@ -37,6 +37,8 @@ func main() {
 		err = handleStop(app, os.Args[2:])
 	case "restart":
 		err = handleRestart(app, os.Args[2:])
+	case "remove", "rm":
+		err = handleRemove(app, os.Args[2:])
 	case "logs":
 		err = handleLogs(app, os.Args[2:])
 	case "status":
@@ -129,6 +131,14 @@ func handleRestart(app *cli.App, args []string) error {
 	return app.BatchRestartCmd(args)
 }
 
+func handleRemove(app *cli.App, args []string) error {
+	if len(args) < 1 {
+		fmt.Println("Usage: devpt remove <name>")
+		return fmt.Errorf("service name required")
+	}
+	return app.RemoveCmd(args[0])
+}
+
 func handleLogs(app *cli.App, args []string) error {
 	if len(args) < 1 {
 		fmt.Println("Usage: devpt logs <name> [--lines N]")
@@ -170,6 +180,7 @@ Manage services:
   devpt start <name> [name...]
   devpt stop <name|--port PORT> [name...]
   devpt restart <name> [name...]
+  devpt remove <name>
   devpt logs <name> [--lines N]
 
 Patterns (quote to prevent shell expansion):
