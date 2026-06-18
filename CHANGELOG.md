@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1
+
+- Fixed `remove`/`rm` command so `devpt remove <name>` works from the CLI instead of failing as unknown; also added to help text
+
 ## 0.5.0
 
 - Added resolved command capture at spawn time so the system learns the OS-interpreted command (e.g., `bunx vite` → `node .../vite`) for reliable identity matching
