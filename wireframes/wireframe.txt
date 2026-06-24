@@ -1,0 +1,25 @@
+Dev Process Tracker - Health Monitor 0.5.0
+Name (10)       Port    PID      Project         Command                                                                                           Health
+──────────────  ──────  ───────  ──────────────  ────────────────────────────────────────────────────────────────────────────────────────────────  ───────
+001~3           63946   79406    001             /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resourc...  ✅
+001~2           63921   77205    001             /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resourc...  ✅
+001~1           63622   69880    001             /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resourc...  ✅
+_offgrid-wire   8199    16092    wireframes-tw4  python3 -m http.server 8199                                                                       ✅
+offdev-fe       9044    12949    frontend        node /Users/kirby/home/yt-offline/frontend/node_modules/.bin/vite                                 ✅
+backend         9055    9057     backend         /Users/kirby/home/yt-offline/backend/.venv/bin/python3 -c from multiprocessing.spawn import s...  ✅
+offdev-be       9055    9054     backend         /Users/kirby/home/yt-offline/backend/.venv/bin/python3 .venv/bin/uvicorn app.main:app --reloa...  ✅
+server          3001    3123     server          /opt/homebrew/Cellar/node/25.8.1_1/bin/node --require /Users/kirby/home/markdown-ticket/node_...  ✅
+mdt-fe          5173    3118     markdown-ticke  node /Users/kirby/home/markdown-ticket/node_modules/.bin/vite --host                              ✅
+kokoro          8880    1043     kokoro          /opt/homebrew/Cellar/python@3.10/3.10.20/Frameworks/Python.framework/Versions/3.10/Resources/...  ✅
+Managed Services (9) ─────────────────────────────────────────────────────────────────────────────────────
+✘ _mdt-prompts [crashed]                                                     Selected service details
+■ _offgrid-designs [stopped]                                                  ▶ offdev-fe [running]
+▶ _offgrid-wire [running]                                                      Source: manual
+✘ mdt-be [crashed]                                                             PID: 12949
+▶ mdt-fe [running]                                                             Port: 9044 (tcp)
+▶ offdev-be [running]                                                          Memory: 86 MB
+▶ offdev-fe [running]                                                          Cmd: node /Users/kirby/home/yt-offline/frontend/node_modules/.bin/vite
+■ pipeline-watch [stopped]                                                     Dir: /Users/kirby/home/yt-offline/frontend
+■ pmdt-fe [stopped]                                                            Started: 2026-06-11 08:45:19
+                                                                               Health: ✅ (4ms) HTTP responding in 4ms
+tab switch list • enter logs/start • / filter • ? toggle help • g group mode

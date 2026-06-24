@@ -32,4 +32,7 @@ coverage.html
 /sandbox/servers/*/*/node
 /sandbox/servers/*/*/server.js
 /.claude/settings.local.json
-wireframe*.*
+
+# Generated wireframe render output
+/rendered.html
+/wireframes/*.html
