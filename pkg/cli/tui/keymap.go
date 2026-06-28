@@ -14,6 +14,7 @@ type keyMap struct {
 	Health       key.Binding
 	Help         key.Binding
 	Add          key.Binding
+	Edit         key.Binding
 	Restart      key.Binding
 	Stop         key.Binding
 	Remove       key.Binding
@@ -76,6 +77,10 @@ func defaultKeyMap() keyMap {
 		Add: key.NewBinding(
 			key.WithKeys("ctrl+a"),
 			key.WithHelp("^A", "add"),
+		),
+		Edit: key.NewBinding(
+			key.WithKeys("e"),
+			key.WithHelp("e", "edit managed"),
 		),
 		Restart: key.NewBinding(
 			key.WithKeys("ctrl+r"),
@@ -148,7 +153,7 @@ func (k keyMap) ShortHelp() []key.Binding {
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Tab, k.Enter, k.Search, k.ClearFilter},
-		{k.Sort, k.SortReverse, k.Health, k.Help, k.Add, k.Restart, k.Stop},
+		{k.Sort, k.SortReverse, k.Health, k.Help, k.Add, k.Edit, k.Restart, k.Stop},
 		{k.Remove, k.Debug, k.Back, k.Follow, k.NextMatch, k.PrevMatch},
 		{k.Confirm, k.Cancel, k.Quit},
 		{k.GroupToggle, k.GroupStop, k.GroupRestart, k.GroupRemove},

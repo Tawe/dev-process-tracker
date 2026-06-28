@@ -33,6 +33,14 @@ Shows listening ports with PID, project, and source.
 devpt add myapp ~/myapp "npm start" 3000
 ```
 
+To overwrite an existing service's parameters in place, add `--force`:
+
+```bash
+devpt add myapp ~/myapp "npm run dev" 3000 8080 --force
+```
+
+Without `--force`, re-adding an existing name is rejected.
+
 ### List with details
 
 ```bash
@@ -132,6 +140,8 @@ devpt
 Key interactions:
 - `Tab` switches between the running-services table and the managed-services list
 - `Enter` opens logs from the top table and starts the selected service from the bottom list
+- `Ctrl+A` opens the **Add service** form (Tab to move between fields, Enter to save, Esc to cancel)
+- `e` edits the selected managed service (change Name to rename; edits to a running service apply on next start/restart)
 - `/` opens inline filter editing in the footer
 - `?` opens the help modal
 - mouse click selects rows and mouse wheel scrolls the active pane

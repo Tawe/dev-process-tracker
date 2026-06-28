@@ -13,6 +13,8 @@ type AppDeps interface {
 	GetService(name string) *models.ManagedService
 	ClearServicePID(name string) error
 	RegisterService(name, cwd, command string, ports []int) error
+	UpdateServiceFields(name, cwd, command string, ports []int) error
+	RenameService(oldName, newName string) error
 	RemoveService(name string) error
 	StartService(name string) error
 	StopService(identifier string) error

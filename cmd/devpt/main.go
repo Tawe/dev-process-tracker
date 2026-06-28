@@ -72,25 +72,37 @@ func handleLS(app *cli.App, args []string) error {
 }
 
 func handleAdd(app *cli.App, args []string) error {
-	if len(args) < 3 {
-		fmt.Println("Usage: devpt add <name> <cwd> <command> [ports...]")
+	// --force / -f may appear anywhere (documented trailing); strip it before
+	// positional parsing so flag ordering doesn't matter.
+	force := false
+	cleaned := make([]string, 0, len(args))
+	for _, a := range args {
+		if a == "--force" || a == "-f" {
+			force = true
+			continue
+		}
+		cleaned = append(cleaned, a)
+	}
+
+	if len(cleaned) < 3 {
+		fmt.Println("Usage: devpt add <name> <cwd> <command> [ports...] [--force]")
 		return fmt.Errorf("insufficient arguments")
 	}
 
-	name := args[0]
-	cwd := args[1]
-	command := args[2]
+	name := cleaned[0]
+	cwd := cleaned[1]
+	command := cleaned[2]
 
 	var ports []int
-	for i := 3; i < len(args); i++ {
-		port, err := strconv.Atoi(args[i])
+	for i := 3; i < len(cleaned); i++ {
+		port, err := strconv.Atoi(cleaned[i])
 		if err != nil {
-			return fmt.Errorf("invalid port: %s", args[i])
+			return fmt.Errorf("invalid port: %s", cleaned[i])
 		}
 		ports = append(ports, port)
 	}
 
-	return app.AddCmd(name, cwd, command, ports)
+	return app.AddCmd(name, cwd, command, ports, force)
 }
 
 func handleStart(app *cli.App, args []string) error {
@@ -176,7 +188,7 @@ Default:
   devpt                             Open interactive top UI
 
 Manage services:
-  devpt add <name> <cwd> "<cmd>" [ports...]
+  devpt add <name> <cwd> "<cmd>" [ports...] [--force]   --force overwrites an existing service
   devpt start <name> [name...]
   devpt stop <name|--port PORT> [name...]
   devpt restart <name> [name...]
@@ -218,7 +230,7 @@ Batch operations:
   devpt stop web-api:3000    # Target specific port
 
 Top UI tips:
-  Tab switch lists, Enter actions/start, / filter, ? help, ^A add
+  Tab switch lists, Enter actions/start, / filter, ? help, ^A add, e edit
 `
 	fmt.Print(usage)
 }

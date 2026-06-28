@@ -74,6 +74,8 @@ Opens the TUI.
 
 ```bash
 devpt add <name> <cwd> "<cmd>" [ports...]
+devpt add <name> <cwd> "<cmd>" [ports...] --force   # overwrite an existing service
+                                         # (without --force an existing name is rejected)
 devpt start <name> [<name>...]          # Start one or more services
 devpt stop <name> [<name>...]           # Stop one or more services
 devpt stop --port <port>
@@ -130,7 +132,8 @@ devpt --version
 - mouse wheel / page keys: scroll the active viewport
 - `Ctrl+E`: stop selected running service (with confirm)
 - `Ctrl+R`: restart selected running managed service
-- `Ctrl+A`: open command input (`add ...` prefilled)
+- `Ctrl+A`: open the **Add service** form (Name, Dir, Command, Ports); `Tab` cycles fields, `Enter` saves, `Esc` cancels
+- `e`: edit the selected managed service in the **Edit service** form (rename by changing Name; edits to a running service apply on the next start/restart)
 - `x` / `Delete` / `Ctrl+D`: remove selected managed service (with confirm)
 - `/`: edit the inline filter in the footer
 - `Ctrl+L`: clear filter

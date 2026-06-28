@@ -1,34 +1,23 @@
 package cli
 
 import (
-	"fmt"
-	"strings"
+	"github.com/devports/devpt/pkg/models"
 )
 
-var blockedShellPatterns = []string{
-	"&&", "||", ";", "|", ">", "<", "`", "$(", "${",
-}
-
-func firstBlockedShellPattern(command string) (string, bool) {
-	cmd := strings.TrimSpace(command)
-	if cmd == "" {
-		return "", false
-	}
-	for _, p := range blockedShellPatterns {
-		if strings.Contains(cmd, p) {
-			return p, true
-		}
-	}
-	return "", false
-}
-
+// validateManagedCommand rejects empty or shell-injection-prone commands.
+// Thin wrapper over models.ValidateManagedCommand (shared with the TUI form).
 func validateManagedCommand(command string) error {
-	cmd := strings.TrimSpace(command)
-	if cmd == "" {
-		return fmt.Errorf("command cannot be empty")
-	}
-	if p, ok := firstBlockedShellPattern(cmd); ok {
-		return fmt.Errorf("command contains disallowed shell pattern %q; use a direct executable command (e.g. \"npm run dev\")", p)
-	}
-	return nil
+	return models.ValidateManagedCommand(command)
+}
+
+// firstBlockedShellPattern returns the first disallowed shell metacharacter
+// sequence in command, if any. Thin wrapper over models.FirstBlockedShellPattern.
+func firstBlockedShellPattern(command string) (string, bool) {
+	return models.FirstBlockedShellPattern(command)
+}
+
+// validateManagedServiceFields validates editable fields shared by the CLI
+// `add` command and the TUI add/edit form: non-empty name + valid command.
+func validateManagedServiceFields(name, command string) error {
+	return models.ValidateManagedServiceFields(name, command)
 }

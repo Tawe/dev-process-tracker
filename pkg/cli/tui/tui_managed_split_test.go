@@ -67,6 +67,20 @@ func TestManagedSplitView_SelectedServiceShowsDedicatedDetailsPane(t *testing.T)
 	assert.Contains(t, output, "test-go-basic-fake")
 }
 
+// DEVPT-020: the details pane renders the action-button row from
+// wireframes/wireframe.md state:default. Edit always shows for a managed
+// service; restart/stop show only when running (running branch covered by
+// TestRenderDetailsActionsRunningShowsAllThree at the helper level).
+func TestManagedSplitView_DetailsShowsEditButtonForManaged(t *testing.T) {
+	model := managedSplitTestModel()
+	model.managedSel = 1 // docs-preview [stopped]
+
+	stoppedOut := model.View().Content
+	assert.Contains(t, stoppedOut, editIcon, "edit button must show for a stopped managed service")
+	assert.NotContains(t, stoppedOut, restartIcon, "restart button must not show when stopped")
+	assert.NotContains(t, stoppedOut, stopIcon+" stop", "stop button must not show when stopped")
+}
+
 func TestManagedSplitView_NoSelectionShowsPlaceholderPane(t *testing.T) {
 	model := managedSplitTestModel()
 	model.managedSel = -1

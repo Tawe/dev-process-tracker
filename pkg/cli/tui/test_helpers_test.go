@@ -61,6 +61,32 @@ func (f *fakeAppDeps) RegisterService(name, cwd, command string, ports []int) er
 	return nil
 }
 
+func (f *fakeAppDeps) UpdateServiceFields(name, cwd, command string, ports []int) error {
+	svc := f.GetService(name)
+	if svc == nil {
+		return fmt.Errorf("service %q not found", name)
+	}
+	svc.CWD = cwd
+	svc.Command = command
+	svc.Ports = ports
+	return nil
+}
+
+func (f *fakeAppDeps) RenameService(oldName, newName string) error {
+	if oldName == newName {
+		return fmt.Errorf("new name %q is the same as the current name", newName)
+	}
+	svc := f.GetService(oldName)
+	if svc == nil {
+		return fmt.Errorf("service %q not found", oldName)
+	}
+	if f.GetService(newName) != nil {
+		return fmt.Errorf("service %q already exists", newName)
+	}
+	svc.Name = newName
+	return nil
+}
+
 func (f *fakeAppDeps) RemoveService(name string) error {
 	for i, svc := range f.services {
 		if svc.Name == name {

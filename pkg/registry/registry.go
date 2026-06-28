@@ -98,6 +98,52 @@ func (r *Registry) UpdateService(service *models.ManagedService) error {
 	return r.save()
 }
 
+// RenameService renames a managed service by changing its registry key.
+// All runtime/identity fields are preserved so a running service keeps
+// resolving to its renamed entry. Done as one locked save() so there is no
+// add+delete window for an orphan or duplicate.
+func (r *Registry) RenameService(oldName, newName string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if newName == oldName {
+		return fmt.Errorf("new name %q is the same as the current name", newName)
+	}
+	svc, exists := r.data.Services[oldName]
+	if !exists {
+		return fmt.Errorf("service %q not found", oldName)
+	}
+	if _, exists := r.data.Services[newName]; exists {
+		return fmt.Errorf("service %q already exists", newName)
+	}
+
+	svc.Name = newName
+	svc.UpdatedAt = time.Now()
+	r.data.Services[newName] = svc
+	delete(r.data.Services, oldName)
+	return r.save()
+}
+
+// UpsertService creates a service, or updates an existing one while
+// preserving its runtime/identity fields. Used by `devpt add --force`.
+func (r *Registry) UpsertService(in *models.ManagedService) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	now := time.Now()
+	if existing, ok := r.data.Services[in.Name]; ok {
+		existing.CWD = in.CWD
+		existing.Command = in.Command
+		existing.Ports = in.Ports
+		existing.UpdatedAt = now
+	} else {
+		in.CreatedAt = now
+		in.UpdatedAt = now
+		r.data.Services[in.Name] = in
+	}
+	return r.save()
+}
+
 // GetService retrieves a service by name
 func (r *Registry) GetService(name string) *models.ManagedService {
 	r.mu.RLock()

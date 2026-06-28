@@ -117,6 +117,7 @@ type topModel struct {
 
 	modal   *modalState
 	confirm *confirmState
+	form    *formState
 	table   processTable
 
 	keys             keyMap

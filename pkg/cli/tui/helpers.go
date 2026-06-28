@@ -19,6 +19,13 @@ var pythonVersionedRe = regexp.MustCompile(`^python\d.*`)
 // copyIcon is the clipboard icon rendered next to copiable command text.
 const copyIcon = "⧉"
 
+// Details-pane action button icons (wireframes/wireframe.md state:default).
+const (
+	restartIcon = "↻"
+	stopIcon    = "■"
+	editIcon    = "✎"
+)
+
 func fixedCell(s string, width int) string {
 	if width <= 0 {
 		return ""

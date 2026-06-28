@@ -72,6 +72,10 @@ func (m *topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *topModel) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	m.lastInput = time.Now()
 
+	if m.form != nil {
+		return m.handleFormKey(msg)
+	}
+
 	if m.mode == viewModeCommand {
 		switch msg.String() {
 		case "esc":
@@ -241,8 +245,14 @@ func (m *topModel) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.initDebugViewport()
 		return m, nil
 	case key.Matches(msg, m.keys.Add):
-		m.mode = viewModeCommand
-		m.cmdInput = "add "
+		if m.mode == viewModeTable && m.modal == nil {
+			m.openAddForm()
+		}
+		return m, nil
+	case msg.String() == "e":
+		if m.mode == viewModeTable && m.modal == nil && m.focus == focusManaged {
+			m.openEditForm()
+		}
 		return m, nil
 	case key.Matches(msg, m.keys.Restart):
 		if m.groupHighlightNamespace != nil {

@@ -15,14 +15,35 @@ func (a *App) ListCmd(detailed bool) error {
 	if err != nil { return err }
 	return PrintServerTable(a.outWriter(), servers, detailed)
 }
-func (a *App) AddCmd(name, cwd, command string, ports []int) error {
-	if err := validateManagedCommand(command); err != nil { return err }
+func (a *App) AddCmd(name, cwd, command string, ports []int, force bool) error {
+	if err := validateManagedServiceFields(name, command); err != nil { return err }
 	svc := &models.ManagedService{Name: name, CWD: cwd, Command: command, Ports: ports}
-	if err := a.registry.AddService(svc); err != nil { return err }
+	if force {
+		if err := a.registry.UpsertService(svc); err != nil { return err }
+	} else {
+		if err := a.registry.AddService(svc); err != nil { return err }
+	}
 	fmt.Fprintf(a.outWriter(), "Service %q registered successfully\n", name)
 	return nil
 }
 func (a *App) RemoveCmd(name string) error { return a.registry.RemoveService(name) }
+
+// UpdateServiceFields edits a managed service's editable fields (CWD, Command,
+// Ports), preserving runtime/identity fields. Name is changed via RenameService.
+func (a *App) UpdateServiceFields(name, cwd, command string, ports []int) error {
+	if err := validateManagedServiceFields(name, command); err != nil { return err }
+	svc := a.registry.GetService(name)
+	if svc == nil { return fmt.Errorf("service %q not found", name) }
+	svc.CWD = cwd
+	svc.Command = command
+	svc.Ports = ports
+	return a.registry.UpdateService(svc)
+}
+
+// RenameService renames a managed service, preserving its runtime identity.
+func (a *App) RenameService(oldName, newName string) error {
+	return a.registry.RenameService(oldName, newName)
+}
 
 // lifecycleManager returns a lifecycle.LifecycleManager wired to the App's dependencies.
 func (a *App) lifecycleManager() *lifecycle.LifecycleManager {

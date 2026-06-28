@@ -468,6 +468,26 @@ func (m *topModel) renderManagedList(width int, managed []*models.ManagedService
 	return strings.Join(lines, "\n")
 }
 
+// renderDetailsActions returns the details-pane action-button row, matching
+// wireframes/wireframe.md state:default. Edit is always shown for a managed
+// service (DEVPT-020); restart/stop appear when the service is running.
+// Full context-sensitive visibility is DEVPT-012 (On Hold).
+func renderDetailsActions(state string) string {
+	green := lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
+	red := lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
+	cyan := lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	gray := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	label := func(s string) string { return gray.Render(s) }
+
+	edit := cyan.Render(editIcon) + " " + label("edit")
+	if state != "running" {
+		return " " + edit
+	}
+	restart := green.Render(restartIcon) + " " + label("restart")
+	stop := red.Render(stopIcon) + " " + label("stop")
+	return " " + restart + "   " + stop + "   " + edit
+}
+
 func (m *topModel) renderSelectedServiceDetails(width int, visible []*models.ServerInfo, managed []*models.ManagedService) string {
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	header := headerStyle.Render("Selected service details")
@@ -584,6 +604,7 @@ func (m *topModel) renderSelectedServiceDetails(width int, visible []*models.Ser
 
 	var lines []string
 	lines = append(lines, fitLine(header, width))
+	lines = append(lines, fitLine(renderDetailsActions(state), width))
 	lines = append(lines, fitLine(fmt.Sprintf(" %s %s [%s]", symbol, svc.Name, state), width))
 
 	if srv := m.serverInfoForService(svc.Name); srv != nil && srv.Source != "" {

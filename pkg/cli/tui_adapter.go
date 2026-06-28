@@ -33,7 +33,15 @@ func (a tuiAdapter) ClearServicePID(name string) error {
 }
 
 func (a tuiAdapter) RegisterService(name, cwd, command string, ports []int) error {
-	return a.app.AddCmd(name, cwd, command, ports)
+	return a.app.AddCmd(name, cwd, command, ports, false)
+}
+
+func (a tuiAdapter) UpdateServiceFields(name, cwd, command string, ports []int) error {
+	return a.app.UpdateServiceFields(name, cwd, command, ports)
+}
+
+func (a tuiAdapter) RenameService(oldName, newName string) error {
+	return a.app.RenameService(oldName, newName)
 }
 
 func (a tuiAdapter) RemoveService(name string) error {

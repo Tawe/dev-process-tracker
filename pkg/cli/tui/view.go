@@ -24,7 +24,9 @@ func (m *topModel) View() tea.View {
 	}
 
 	content := m.baseViewContent(width)
-	if m.modal != nil {
+	if m.form != nil {
+		content = overlayModal(content, m.renderFormModal(width), width)
+	} else if m.modal != nil {
 		content = overlayModal(content, m.activeModalOverlay(width), width)
 	}
 
