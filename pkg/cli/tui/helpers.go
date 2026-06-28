@@ -19,8 +19,10 @@ var pythonVersionedRe = regexp.MustCompile(`^python\d.*`)
 // copyIcon is the clipboard icon rendered next to copiable command text.
 const copyIcon = "⧉"
 
-// Details-pane action button icons (wireframes/wireframe.md state:default).
+// Details-pane action button icons (wireframes/wireframe.md state:default;
+// DEVPT-012 context-sensitive visibility).
 const (
+	startIcon  = "▶"
 	restartIcon = "↻"
 	stopIcon    = "■"
 	editIcon    = "✎"
@@ -443,6 +445,40 @@ func (m *topModel) handleEnterKey() (tea.Model, tea.Cmd) {
 // which reports row coordinates one line below our internal table math.
 const mouseCoordOffset = 1
 
+// dispatchDetailsAction fires the details-pane action button the user clicked.
+// Uses m.managedSel directly (the service whose details are shown) so it works
+// regardless of list focus.
+func (m *topModel) dispatchDetailsAction(label string) (tea.Model, tea.Cmd) {
+	managed := m.managedServices()
+	if m.managedSel < 0 || m.managedSel >= len(managed) {
+		m.cmdStatus = "No managed service selected"
+		return m, nil
+	}
+	switch label {
+	case "edit":
+		m.openEditForm()
+		return m, nil
+	case "start":
+		name := managed[m.managedSel].Name
+		if err := m.app.StartService(name); err != nil {
+			m.cmdStatus = err.Error()
+		} else {
+			m.cmdStatus = "Started " + strconv.Quote(name)
+			m.starting[name] = time.Now()
+		}
+		m.refresh()
+		return m, nil
+	case "restart":
+		m.cmdStatus = m.restartManaged()
+		m.refresh()
+		return m, nil
+	case "stop":
+		m.prepareManagedStopConfirm()
+		return m, nil
+	}
+	return m, nil
+}
+
 func (m *topModel) handleTableMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	visible := m.visibleServers()
 	managed := m.managedServices()
@@ -508,9 +544,19 @@ func (m *topModel) handleTableMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) 
 
 	switch m.table.managedClickRegion(managedViewportY, mouse.X) {
 	case managedRegionDetails:
-		// Check if click is on the copy icon in the details Cmd line.
+		absoluteDetailsLine := managedViewportY + m.table.selectedDetailsVP.YOffset()
+		// Action buttons (DEVPT-020): edit / start / restart / stop.
+		if absoluteDetailsLine == m.detailsActionLine && len(m.detailsActionBtns) > 0 {
+			relX := mouse.X - m.table.lastListWidth
+			for _, b := range m.detailsActionBtns {
+				if relX >= b.x0 && relX < b.x1 {
+					m.lastInput = time.Now()
+					return m.dispatchDetailsAction(b.label)
+				}
+			}
+		}
+		// Copy icon on the details Cmd line.
 		if m.detailsCommand != "" && m.detailsCmdLineIdx >= 0 {
-			absoluteDetailsLine := managedViewportY + m.table.selectedDetailsVP.YOffset()
 			if absoluteDetailsLine == m.detailsCmdLineIdx && mouse.X-m.table.lastListWidth < 4 {
 				return m, tea.SetClipboard(m.detailsCommand)
 			}

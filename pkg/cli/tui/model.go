@@ -139,6 +139,10 @@ type topModel struct {
 	detailsCommand     string
 	detailsCmdLineIdx  int // 1-based line index of the Cmd line in the details pane (-1 if none)
 
+	// Details-pane action button hit regions (set during render, read on click).
+	detailsActionLine int            // absolute details-content line index of the action row (-1 if none)
+	detailsActionBtns []detailsAction
+
 	// Render caches — invalidated by refresh(), sort changes, and filter changes.
 	cachedDisplayNames        []string
 	cachedDisplayNamesQuery   string
@@ -204,6 +208,7 @@ func newTopModel(app AppDeps) *topModel {
 		searchInput:          searchInput,
 		tableFollowSelection: true,
 		detailsCmdLineIdx:   -1,
+		detailsActionLine:   -1,
 		serversVersion:       1,
 		servicesVersion:      1,
 	}

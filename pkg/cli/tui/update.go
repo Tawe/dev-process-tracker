@@ -16,6 +16,16 @@ func (m *topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		return m.handleKeyPress(msg)
+	case tea.PasteMsg:
+		// Bracketed paste (terminal Cmd+V / Ctrl+Shift+V). Route to the focused
+		// form field when the add/edit form is open; textinput inserts at the
+		// cursor. No-op when no form is open.
+		if m.form != nil {
+			var cmd tea.Cmd
+			m.form.fields[m.form.focus], cmd = m.form.fields[m.form.focus].Update(msg)
+			return m, cmd
+		}
+		return m, nil
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 	case tea.WindowSizeMsg:

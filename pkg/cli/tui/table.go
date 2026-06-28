@@ -468,33 +468,65 @@ func (m *topModel) renderManagedList(width int, managed []*models.ManagedService
 	return strings.Join(lines, "\n")
 }
 
-// renderDetailsActions returns the details-pane action-button row, matching
-// wireframes/wireframe.md state:default. Edit is always shown for a managed
-// service (DEVPT-020); restart/stop appear when the service is running.
-// Full context-sensitive visibility is DEVPT-012 (On Hold).
-func renderDetailsActions(state string) string {
+// detailsAction is one action button's hit region: x-range is relative to
+// the start of the details column (x0 inclusive, x1 exclusive).
+type detailsAction struct {
+	label string
+	x0    int
+	x1    int
+}
+
+// renderDetailsActions returns the details-pane action-button row plus the hit
+// regions of each button. Matches wireframes/wireframe.md state:default and
+// DEVPT-012 context visibility: edit (stable, leftmost) always shows for a
+// managed service; running adds restart then stop; stopped/crashed adds start;
+// starting shows edit only. Each whole button (icon + label) is colored by its
+// action so the row reads as distinct colored units, not gray labels.
+func renderDetailsActions(state string) (string, []detailsAction) {
 	green := lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
 	red := lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
 	cyan := lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
-	gray := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	label := func(s string) string { return gray.Render(s) }
 
-	edit := cyan.Render(editIcon) + " " + label("edit")
-	if state != "running" {
-		return " " + edit
+	type btn struct {
+		icon, label string
+		style       lipgloss.Style
 	}
-	restart := green.Render(restartIcon) + " " + label("restart")
-	stop := red.Render(stopIcon) + " " + label("stop")
-	return " " + restart + "   " + stop + "   " + edit
+	var btns []btn
+	btns = append(btns, btn{editIcon, "edit", cyan})
+	if state == "running" {
+		btns = append(btns, btn{restartIcon, "restart", green})
+		btns = append(btns, btn{stopIcon, "stop", red})
+	} else if state != "starting" {
+		btns = append(btns, btn{startIcon, "start", green})
+	}
+
+	var b strings.Builder
+	var hits []detailsAction
+	x := 0
+	for i, bt := range btns {
+		if i > 0 {
+			b.WriteString("   ")
+			x += 3
+		}
+		text := bt.icon + " " + bt.label
+		b.WriteString(bt.style.Render(text))
+		w := runewidth.StringWidth(text)
+		hits = append(hits, detailsAction{label: bt.label, x0: x, x1: x + w})
+		x += w
+	}
+	return b.String(), hits
 }
 
 func (m *topModel) renderSelectedServiceDetails(width int, visible []*models.ServerInfo, managed []*models.ManagedService) string {
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	header := headerStyle.Render("Selected service details")
 
-	// Reset details command on each render; will be set if a Cmd line is produced.
+	// Reset details command + action-button hit regions on each render; set
+	// later only when the relevant lines are produced.
 	m.detailsCommand = ""
 	m.detailsCmdLineIdx = -1
+	m.detailsActionLine = -1
+	m.detailsActionBtns = nil
 
 	// If focus is on running services, show details for the selected running service
 	if m.focus == focusRunning {
@@ -604,7 +636,10 @@ func (m *topModel) renderSelectedServiceDetails(width int, visible []*models.Ser
 
 	var lines []string
 	lines = append(lines, fitLine(header, width))
-	lines = append(lines, fitLine(renderDetailsActions(state), width))
+	actionRow, actionHits := renderDetailsActions(state)
+	m.detailsActionLine = len(lines) // index the action row is about to occupy
+	m.detailsActionBtns = actionHits
+	lines = append(lines, fitAnsiLine(actionRow, width))
 	lines = append(lines, fitLine(fmt.Sprintf(" %s %s [%s]", symbol, svc.Name, state), width))
 
 	if srv := m.serverInfoForService(svc.Name); srv != nil && srv.Source != "" {
