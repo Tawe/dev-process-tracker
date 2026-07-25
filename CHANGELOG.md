@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0
+
+- Added in-TUI editing for managed services so you can add or edit service configs without touching config files; includes `--force` to overwrite existing entries
+- Added colored, clickable action buttons in the details pane and paste-into-form support so service edits can be triggered directly from the running list
+- Fixed Windows release build so the cross-compile step no longer fails with `undefined: getProcessCommand` (the v0.5.0 and v0.5.1 releases were broken on this step)
+- Updated CI to Node 24-compatible GitHub Actions so release runs no longer emit deprecation warnings
+
 ## 0.5.1
 
 - Fixed `remove`/`rm` command so `devpt remove <name>` works from the CLI instead of failing as unknown; also added to help text
