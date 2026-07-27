@@ -1,0 +1,37 @@
+checkpoint:
+  version: 4
+  cr_key: "DEVPT-004"
+  mode: "feature"
+  part: null
+  task_id: "3"
+  step: "complete"
+  batch:
+    size: 3
+    current_count: 3
+    accumulated_files: []
+    all_clean: true
+  baseline:
+    tests: null
+    scope: null
+  implementation:
+    files_changed:
+      - pkg/cli/tui/table.go
+      - pkg/cli/tui/helpers.go
+      - pkg/cli/tui/tui_ui_test.go
+    files_created: []
+    notes: "Code agent completed split-view implementation with crash context details"
+  latest_verify:
+    tests:
+      exit_code: 0
+      command: "go test ./pkg/cli/... -count=1"
+    scope: null
+    behavioral: null
+  fix_attempts: 0
+  fix_history: []
+  completion:
+    verification_round: 0
+    last_verdict: "pass"
+    issues_found: []
+    fix_tasks_generated: []
+    batch_verifies_clean: true
+  updated_at: "2026-04-02T10:30:00Z"

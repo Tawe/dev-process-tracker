@@ -30,6 +30,11 @@ func NewRegistry(filePath string) *Registry {
 }
 
 // Load reads the registry from disk
+// FilePath returns the registry file path.
+func (r *Registry) FilePath() string {
+	return r.filePath
+}
+
 func (r *Registry) Load() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -58,31 +63,6 @@ func (r *Registry) Load() error {
 	}
 
 	r.data = data
-	return nil
-}
-
-// Save writes the registry to disk
-func (r *Registry) Save() error {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	// Ensure directory exists
-	dir := filepath.Dir(r.filePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create registry directory: %w", err)
-	}
-
-	// Marshal to JSON
-	content, err := json.MarshalIndent(r.data, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal registry: %w", err)
-	}
-
-	// Write file with mode 0644
-	if err := os.WriteFile(r.filePath, content, 0644); err != nil {
-		return fmt.Errorf("failed to write registry file: %w", err)
-	}
-
 	return nil
 }
 
@@ -115,6 +95,52 @@ func (r *Registry) UpdateService(service *models.ManagedService) error {
 	service.UpdatedAt = time.Now()
 	r.data.Services[service.Name] = service
 
+	return r.save()
+}
+
+// RenameService renames a managed service by changing its registry key.
+// All runtime/identity fields are preserved so a running service keeps
+// resolving to its renamed entry. Done as one locked save() so there is no
+// add+delete window for an orphan or duplicate.
+func (r *Registry) RenameService(oldName, newName string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if newName == oldName {
+		return fmt.Errorf("new name %q is the same as the current name", newName)
+	}
+	svc, exists := r.data.Services[oldName]
+	if !exists {
+		return fmt.Errorf("service %q not found", oldName)
+	}
+	if _, exists := r.data.Services[newName]; exists {
+		return fmt.Errorf("service %q already exists", newName)
+	}
+
+	svc.Name = newName
+	svc.UpdatedAt = time.Now()
+	r.data.Services[newName] = svc
+	delete(r.data.Services, oldName)
+	return r.save()
+}
+
+// UpsertService creates a service, or updates an existing one while
+// preserving its runtime/identity fields. Used by `devpt add --force`.
+func (r *Registry) UpsertService(in *models.ManagedService) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	now := time.Now()
+	if existing, ok := r.data.Services[in.Name]; ok {
+		existing.CWD = in.CWD
+		existing.Command = in.Command
+		existing.Ports = in.Ports
+		existing.UpdatedAt = now
+	} else {
+		in.CreatedAt = now
+		in.UpdatedAt = now
+		r.data.Services[in.Name] = in
+	}
 	return r.save()
 }
 
@@ -162,7 +188,28 @@ func (r *Registry) UpdateServicePID(name string, pid int) error {
 	}
 
 	svc.LastPID = &pid
+	svc.LastProcessStartTime = nil
 	now := time.Now()
+	svc.LastStart = &now
+	svc.LastStop = nil
+	svc.UpdatedAt = now
+
+	return r.save()
+}
+
+// UpdateServiceProcessIdentity updates the last confirmed process identity for a service.
+func (r *Registry) UpdateServiceProcessIdentity(name string, pid int, processStartTime time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	svc, exists := r.data.Services[name]
+	if !exists {
+		return fmt.Errorf("service %q not found", name)
+	}
+
+	now := time.Now()
+	svc.LastPID = &pid
+	svc.LastProcessStartTime = &processStartTime
 	svc.LastStart = &now
 	svc.LastStop = nil
 	svc.UpdatedAt = now
@@ -182,8 +229,26 @@ func (r *Registry) ClearServicePID(name string) error {
 
 	now := time.Now()
 	svc.LastPID = nil
+	svc.LastProcessStartTime = nil
 	svc.LastStop = &now
 	svc.UpdatedAt = now
+	return r.save()
+}
+
+// UpdateServiceResolvedCommand records the OS-resolved command for a service.
+// This is the actual command visible via ps after the process starts, which may differ
+// from the declared command (e.g. "bunx vite" -> "node .../vite").
+func (r *Registry) UpdateServiceResolvedCommand(name, resolvedCommand string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	svc, exists := r.data.Services[name]
+	if !exists {
+		return fmt.Errorf("service %q not found", name)
+	}
+
+	svc.ResolvedCommand = resolvedCommand
+	svc.UpdatedAt = time.Now()
 	return r.save()
 }
 

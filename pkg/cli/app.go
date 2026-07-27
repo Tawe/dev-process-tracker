@@ -9,9 +9,11 @@ import (
 	"sync"
 
 	"github.com/devports/devpt/pkg/health"
+	"github.com/devports/devpt/pkg/lifecycle"
 	"github.com/devports/devpt/pkg/models"
 	"github.com/devports/devpt/pkg/process"
 	"github.com/devports/devpt/pkg/registry"
+	"github.com/devports/devpt/pkg/resource"
 	"github.com/devports/devpt/pkg/scanner"
 )
 
@@ -24,12 +26,19 @@ type App struct {
 	scanner        *scanner.ProcessScanner
 	resolver       *scanner.ProjectResolver
 	detector       *scanner.AgentDetector
-	processManager *process.Manager
-	healthChecker  *health.Checker
+	processManager   *process.Manager
+	healthChecker    *health.Checker
+	resourceCollector *resource.Collector
+	stdout           io.Writer
+	stderr           io.Writer
 }
 
 // NewApp creates and initializes the application
 func NewApp() (*App, error) {
+	if err := scanner.CheckPrereqs(); err != nil {
+		return nil, err
+	}
+
 	config, err := models.GetConfigPaths()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get config paths: %w", err)
@@ -53,22 +62,46 @@ func NewApp() (*App, error) {
 		scanner:        scanner.NewProcessScanner(),
 		resolver:       scanner.NewProjectResolver(),
 		detector:       scanner.NewAgentDetector(),
-		processManager: process.NewManager(config.LogsDir),
-		healthChecker:  health.NewChecker(0),
+		processManager:   process.NewManager(config.LogsDir),
+		healthChecker:    health.NewChecker(0),
+		resourceCollector: resource.NewCollector(),
+		stdout:           os.Stdout,
+		stderr:           os.Stderr,
 	}, nil
+}
+
+func (a *App) outWriter() io.Writer {
+	if a != nil && a.stdout != nil {
+		return a.stdout
+	}
+	return io.Discard
+}
+
+func (a *App) errWriter() io.Writer {
+	if a != nil && a.stderr != nil {
+		return a.stderr
+	}
+	return io.Discard
+}
+
+func (a *App) withOutput(stdout, stderr io.Writer) *App {
+	if a == nil {
+		return nil
+	}
+	clone := *a
+	clone.stdout = stdout
+	clone.stderr = stderr
+	return &clone
 }
 
 // discoverServers combines scanning and detection into complete server info
 func (a *App) discoverServers() ([]*models.ServerInfo, error) {
-	processes, err := a.scanner.ScanListeningPorts()
+	processes, err := (&appDeps{app: a}).ScanProcesses()
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan processes: %w", err)
 	}
 
-	// Filter to keep only development processes
-	commandMap := a.getCommandMap(processes)
-	processes = scanner.FilterDevProcesses(processes, commandMap)
-
+	managedServices := a.registry.ListServices()
 	for _, proc := range processes {
 		if proc.CWD != "" {
 			proc.ProjectRoot = a.resolver.FindProjectRoot(proc.CWD)
@@ -76,127 +109,73 @@ func (a *App) discoverServers() ([]*models.ServerInfo, error) {
 		a.detector.EnrichProcessRecord(proc)
 	}
 
+	return a.buildServerInfos(processes, managedServices), nil
+}
+
+func (a *App) buildServerInfos(processes []*models.ProcessRecord, managedServices []*models.ManagedService) []*models.ServerInfo {
+	commandMap := a.getCommandMap(processes)
 	var servers []*models.ServerInfo
 
+	matchedServices := make(map[*models.ManagedService]*models.ProcessRecord, len(managedServices))
+	matchedProcesses := make(map[*models.ProcessRecord]*models.ManagedService, len(managedServices))
+	reconciledServices := make(map[*models.ManagedService]lifecycle.ReconciledService, len(managedServices))
+	for _, svc := range managedServices {
+		reconciled := lifecycle.ReconcileWithResolver(svc, processes, managedServices, a.resolver.FindProjectRoot)
+		reconciledServices[svc] = reconciled
+		if reconciled.Status == string(models.StatusRunning) && reconciled.Verified && reconciled.Process != nil {
+			matchedServices[svc] = reconciled.Process
+			matchedProcesses[reconciled.Process] = svc
+		}
+	}
+
 	for _, proc := range processes {
+		if proc == nil {
+			continue
+		}
+
+		matchedSvc := matchedProcesses[proc]
+		if matchedSvc == nil && !scanner.IsDevProcess(proc, commandMap[proc.PID]) {
+			continue
+		}
+
 		source := models.SourceManual
 		if proc.AgentTag != nil {
 			source = proc.AgentTag.Source
 		}
 
 		servers = append(servers, &models.ServerInfo{
-			ProcessRecord: proc,
-			Source:        source,
-			Status:        "running",
+			ManagedService: matchedSvc,
+			ProcessRecord:  proc,
+			Source:         source,
+			Status:         "running",
 		})
 	}
 
-	type managedIdentity struct {
-		cwd  string
-		root string
-	}
-
-	managedServices := a.registry.ListServices()
-	portOwners := make(map[int][]*models.ManagedService)
-	rootOwners := make(map[string]int)
-	cwdOwners := make(map[string]int)
-	identities := make(map[*models.ManagedService]managedIdentity, len(managedServices))
 	for _, svc := range managedServices {
-		svcCWD := normalizePath(svc.CWD)
-		svcRoot := normalizePath(a.resolver.FindProjectRoot(svc.CWD))
-		identities[svc] = managedIdentity{
-			cwd:  svcCWD,
-			root: svcRoot,
-		}
-		if svcCWD != "" {
-			cwdOwners[svcCWD]++
-		}
-		if svcRoot != "" {
-			rootOwners[svcRoot]++
-		}
-		for _, port := range svc.Ports {
-			portOwners[port] = append(portOwners[port], svc)
-		}
-	}
-	for _, svc := range managedServices {
-		found := false
-		identity := identities[svc]
-		svcCWD := identity.cwd
-		svcRoot := identity.root
-
-		for _, server := range servers {
-			if server.ProcessRecord == nil || server.ManagedService != nil {
-				continue
-			}
-			procCWD := normalizePath(server.ProcessRecord.CWD)
-			procRoot := normalizePath(server.ProcessRecord.ProjectRoot)
-			if canMatchByPath(svcRoot, svcCWD, procRoot, procCWD, rootOwners, cwdOwners) {
-				server.ManagedService = svc
-				found = true
-				break
-			}
+		if matchedServices[svc] != nil {
+			continue
 		}
 
-		if !found && len(svc.Ports) > 0 {
-			for _, port := range svc.Ports {
-				if owners := portOwners[port]; len(owners) != 1 {
-					continue
-				}
-				for _, server := range servers {
-					if server.ProcessRecord != nil && server.ProcessRecord.Port == port && server.ManagedService == nil {
-						procCWD := normalizePath(server.ProcessRecord.CWD)
-						procRoot := normalizePath(server.ProcessRecord.ProjectRoot)
-						if svcRoot != "" && procRoot != "" && svcRoot != procRoot {
-							continue
-						}
-						if svcCWD != "" && procCWD != "" && svcCWD != procCWD {
-							continue
-						}
-						server.ManagedService = svc
-						found = true
-						break
-					}
-				}
-				if found {
-					break
-				}
-			}
+		reconciled := reconciledServices[svc]
+		status := reconciled.Status
+		if status == "" {
+			status = string(models.StatusStopped)
 		}
-
-		if !found && svc.LastPID != nil && *svc.LastPID > 0 {
-			for _, server := range servers {
-				if server.ProcessRecord == nil || server.ManagedService != nil || server.ProcessRecord.PID != *svc.LastPID {
-					continue
-				}
-				procCWD := normalizePath(server.ProcessRecord.CWD)
-				procRoot := normalizePath(server.ProcessRecord.ProjectRoot)
-				if serviceMatchesProcess(svc, server.ProcessRecord, svcRoot, procRoot, procCWD) {
-					server.ManagedService = svc
-					found = true
-					break
-				}
-			}
+		crashReason := ""
+		crashLogTail := []string(nil)
+		if status == string(models.StatusCrashed) {
+			crashReason, crashLogTail = a.getCrashReport(svc.Name, 12)
 		}
-
-		if !found {
-			status := "stopped"
-			crashReason := ""
-			crashLogTail := []string(nil)
-			if svc.LastPID != nil && *svc.LastPID > 0 {
-				status = "crashed"
-				crashReason, crashLogTail = a.getCrashReport(svc.Name, 12)
-			}
-			servers = append(servers, &models.ServerInfo{
-				ManagedService: svc,
-				Source:         models.SourceManaged,
-				Status:         status,
-				CrashReason:    crashReason,
-				CrashLogTail:   crashLogTail,
-			})
-		}
+		servers = append(servers, &models.ServerInfo{
+			ManagedService: svc,
+			Source:         models.SourceManaged,
+			Status:         status,
+			CrashReason:    crashReason,
+			CrashLogTail:   crashLogTail,
+		})
 	}
 
-	return servers, nil
+	return servers
 }
 
 func (a *App) getCrashReport(serviceName string, lines int) (string, []string) {
@@ -260,42 +239,6 @@ func (a *App) getCommandMap(processes []*models.ProcessRecord) map[int]string {
 		}
 	}
 	return cmdMap
-}
-
-func normalizePath(p string) string {
-	p = strings.TrimSpace(p)
-	p = strings.TrimRight(p, "/")
-	return p
-}
-
-func canMatchByPath(svcRoot, svcCWD, procRoot, procCWD string, rootOwners, cwdOwners map[string]int) bool {
-	if svcRoot != "" && procRoot != "" && svcRoot == procRoot && rootOwners[svcRoot] == 1 {
-		return true
-	}
-	if svcCWD != "" && procCWD != "" && svcCWD == procCWD && cwdOwners[svcCWD] == 1 {
-		return true
-	}
-	return false
-}
-
-func serviceMatchesProcess(svc *models.ManagedService, proc *models.ProcessRecord, svcRoot, procRoot, procCWD string) bool {
-	if svc == nil || proc == nil {
-		return false
-	}
-
-	svcCWD := normalizePath(svc.CWD)
-	if svcCWD != "" && procCWD != "" && svcCWD == procCWD {
-		return true
-	}
-	if svcRoot != "" && procRoot != "" && svcRoot == procRoot {
-		return true
-	}
-	for _, port := range svc.Ports {
-		if port > 0 && proc.Port == port {
-			return true
-		}
-	}
-	return false
 }
 
 func warnLegacyManagedCommands(reg *registry.Registry, out io.Writer) {

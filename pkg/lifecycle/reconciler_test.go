@@ -1,0 +1,276 @@
+package lifecycle
+
+import (
+	"testing"
+	"time"
+
+	"github.com/devports/devpt/pkg/models"
+)
+
+func TestReconcile_VerifiedRunning_CWD(t *testing.T) {
+	t.Parallel()
+
+	svc := &models.ManagedService{
+		Name: "api",
+		CWD:  "/project/app",
+	}
+	proc := &models.ProcessRecord{
+		PID:  1234,
+		CWD:  "/project/app",
+		Port: 3000,
+	}
+
+	result := Reconcile(svc, []*models.ProcessRecord{proc}, []*models.ManagedService{svc})
+	if result.Status != "running" {
+		t.Errorf("expected status running for CWD match, got %q", result.Status)
+	}
+}
+
+func TestReconcile_VerifiedRunning_ProjectRoot(t *testing.T) {
+	t.Parallel()
+
+	svc := &models.ManagedService{
+		Name: "api",
+		CWD:  "/project/app/src",
+	}
+	proc := &models.ProcessRecord{
+		PID:         1234,
+		CWD:         "/project/app/src/server",
+		ProjectRoot: "/project/app",
+		Port:        3000,
+	}
+
+	resolver := func(cwd string) string {
+		if cwd == "/project/app/src" {
+			return "/project/app"
+		}
+		return cwd
+	}
+
+	result := ReconcileWithResolver(svc, []*models.ProcessRecord{proc}, []*models.ManagedService{svc}, resolver)
+	if result.Status != "running" {
+		t.Errorf("expected status running for project root match, got %q", result.Status)
+	}
+}
+
+func TestReconcile_VerifiedRunning_UniquePort(t *testing.T) {
+	t.Parallel()
+
+	svc := &models.ManagedService{
+		Name:  "api",
+		CWD:   "/project/app",
+		Ports: []int{3000},
+	}
+	// Process has no CWD info (common with lsof), but is on the service's unique port
+	proc := &models.ProcessRecord{
+		PID:  1234,
+		CWD:  "",
+		Port: 3000,
+	}
+
+	result := Reconcile(svc, []*models.ProcessRecord{proc}, []*models.ManagedService{svc})
+	if result.Status != "running" {
+		t.Errorf("expected status running for unique port match, got %q", result.Status)
+	}
+}
+
+func TestReconcile_Stopped(t *testing.T) {
+	t.Parallel()
+
+	svc := &models.ManagedService{
+		Name: "api",
+		CWD:  "/project/app",
+	}
+
+	result := Reconcile(svc, []*models.ProcessRecord{}, []*models.ManagedService{svc})
+	if result.Status != "stopped" {
+		t.Errorf("expected status stopped, got %q", result.Status)
+	}
+}
+
+func TestReconcile_Crashed_StalePID(t *testing.T) {
+	t.Parallel()
+
+	pid := 9999 // Not running
+	svc := &models.ManagedService{
+		Name:    "api",
+		CWD:     "/project/app",
+		LastPID: &pid,
+	}
+
+	result := Reconcile(svc, []*models.ProcessRecord{}, []*models.ManagedService{svc})
+	if result.Status != "crashed" {
+		t.Errorf("expected status crashed for stale PID with no live process, got %q", result.Status)
+	}
+}
+
+func TestReconcile_Unknown_AmbiguousIdentity(t *testing.T) {
+	t.Parallel()
+
+	svc1 := &models.ManagedService{
+		Name: "api",
+		CWD:  "/shared",
+	}
+	svc2 := &models.ManagedService{
+		Name: "worker",
+		CWD:  "/shared",
+	}
+	proc := &models.ProcessRecord{
+		PID:  1234,
+		CWD:  "/shared",
+		Port: 3000,
+	}
+
+	result := Reconcile(svc1, []*models.ProcessRecord{proc}, []*models.ManagedService{svc1, svc2})
+	if result.Status != "unknown" {
+		t.Errorf("expected status unknown for ambiguous identity, got %q", result.Status)
+	}
+}
+
+func TestReconcile_ClearsStaleMetadata(t *testing.T) {
+	t.Parallel()
+
+	pid := 9999
+	svc := &models.ManagedService{
+		Name:    "api",
+		CWD:     "/project/app",
+		LastPID: &pid,
+	}
+
+	result := Reconcile(svc, []*models.ProcessRecord{}, []*models.ManagedService{svc})
+	if !result.HasStaleMetadata {
+		t.Error("Reconcile should clear stale metadata when PID no longer exists")
+	}
+}
+
+func TestReconcile_Ambiguous_SkippedWhenPortUniquelyOwned(t *testing.T) {
+	t.Parallel()
+
+	svc1 := &models.ManagedService{
+		Name:  "api",
+		CWD:   "/shared",
+		Ports: []int{3000},
+	}
+	svc2 := &models.ManagedService{
+		Name:  "worker",
+		CWD:   "/shared",
+		Ports: []int{4000},
+	}
+	// Process is on port 4000, uniquely owned by worker.
+	// It should NOT cause ambiguity for api.
+	proc := &models.ProcessRecord{
+		PID:  1234,
+		CWD:  "/shared",
+		Port: 4000,
+	}
+
+	result := Reconcile(svc1, []*models.ProcessRecord{proc}, []*models.ManagedService{svc1, svc2})
+	if result.Status == "unknown" {
+		t.Errorf("expected status != unknown when process port is uniquely owned by another service, got %q", result.Status)
+	}
+}
+
+func TestReconcile_Ambiguous_WhenPortShared(t *testing.T) {
+	t.Parallel()
+
+	svc1 := &models.ManagedService{
+		Name:  "api",
+		CWD:   "/shared",
+		Ports: []int{3000},
+	}
+	svc2 := &models.ManagedService{
+		Name:  "worker",
+		CWD:   "/shared",
+		Ports: []int{3000},
+	}
+	// Port 3000 declared by both services, CWD also shared → ambiguous.
+	proc := &models.ProcessRecord{
+		PID:  1234,
+		CWD:  "/shared",
+		Port: 3000,
+	}
+
+	result := Reconcile(svc1, []*models.ProcessRecord{proc}, []*models.ManagedService{svc1, svc2})
+	if result.Status != "unknown" {
+		t.Errorf("expected status unknown when port is shared and CWD matches both services, got %q", result.Status)
+	}
+}
+
+func TestReconcile_PIDReuse_Unknown(t *testing.T) {
+	t.Parallel()
+
+	pid := 1234
+	svc := &models.ManagedService{
+		Name:    "api",
+		CWD:     "/project/app",
+		LastPID: &pid,
+	}
+	// Same PID but completely different process
+	proc := &models.ProcessRecord{
+		PID:     1234,
+		CWD:     "/other/app",
+		Command: "python server.py",
+		Port:    5000,
+	}
+
+	result := Reconcile(svc, []*models.ProcessRecord{proc}, []*models.ManagedService{svc})
+	if result.Verified {
+		t.Error("PID reuse should NOT verify the service")
+	}
+}
+
+func TestReconcile_PIDStartTimeMatch_Running(t *testing.T) {
+	t.Parallel()
+
+	pid := 1234
+	startTime := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	svc := &models.ManagedService{
+		Name:                 "api",
+		CWD:                  "/project/app",
+		LastPID:              &pid,
+		LastProcessStartTime: &startTime,
+	}
+	proc := &models.ProcessRecord{
+		PID:       pid,
+		CWD:       "/other/path",
+		StartTime: &startTime,
+	}
+
+	result := Reconcile(svc, []*models.ProcessRecord{proc}, []*models.ManagedService{svc})
+	if result.Status != "running" {
+		t.Fatalf("expected running for matching PID + process start time, got %q", result.Status)
+	}
+	if !result.Verified {
+		t.Fatal("expected verified reconcile result")
+	}
+}
+
+func TestReconcile_PIDStartTimeMismatch_Unknown(t *testing.T) {
+	t.Parallel()
+
+	pid := 1234
+	storedStart := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	actualStart := storedStart.Add(5 * time.Second)
+	svc := &models.ManagedService{
+		Name:                 "api",
+		CWD:                  "/project/app",
+		LastPID:              &pid,
+		LastProcessStartTime: &storedStart,
+	}
+	proc := &models.ProcessRecord{
+		PID:       pid,
+		CWD:       "/project/app",
+		StartTime: &actualStart,
+	}
+
+	result := Reconcile(svc, []*models.ProcessRecord{proc}, []*models.ManagedService{svc})
+	if result.Status != "unknown" {
+		t.Fatalf("expected unknown for PID start-time mismatch, got %q", result.Status)
+	}
+	if result.Verified {
+		t.Fatal("mismatched process start time must not verify")
+	}
+	if !result.HasStaleMetadata {
+		t.Fatal("mismatched process start time should flag stale metadata")
+	}
+}

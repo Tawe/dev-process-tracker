@@ -7,10 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/devports/devpt/pkg/models"
@@ -24,6 +24,7 @@ type Manager struct {
 var ErrNoLogs = errors.New("no logs available")
 var ErrNeedSudo = errors.New("requires sudo to terminate process")
 var ErrNoProcessLogs = errors.New("no process logs available")
+var ErrProcessStartTimeUnavailable = errors.New("process start time unavailable")
 
 // NewManager creates a new process manager
 func NewManager(logsDir string) *Manager {
@@ -60,10 +61,8 @@ func (m *Manager) Start(service *models.ManagedService) (int, error) {
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = service.CWD
 
-	// Set up process group to manage all child processes
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
+	// Set up process group to manage all child processes (platform-specific)
+	setProcessGroup(cmd)
 
 	// Redirect output to log file
 	cmd.Stdout = logFile
@@ -88,34 +87,33 @@ func (m *Manager) Stop(pid int, timeout time.Duration) error {
 
 	// First attempt graceful termination. For non-child processes we cannot use Wait(),
 	// so we send signals and poll for liveness.
-	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil {
-		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-			return fmt.Errorf("failed to send SIGTERM: %w", err)
+	if err := terminateProcess(pid); err != nil {
+		if err := terminateProcessFallback(pid); err != nil {
+			return fmt.Errorf("failed to send termination signal: %w", err)
 		}
 	}
 
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if !m.isAlive(pid) {
+		if !isProcessAlive(pid) {
 			return nil
 		}
 		time.Sleep(120 * time.Millisecond)
 	}
 
 	// Escalate to hard kill.
-	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
-		_ = syscall.Kill(pid, syscall.SIGKILL)
+	if err := killProcess(pid); err != nil {
+		_ = killProcessFallback(pid)
 	}
 	time.Sleep(200 * time.Millisecond)
-	if m.isAlive(pid) {
+	if isProcessAlive(pid) {
 		return ErrNeedSudo
 	}
 	return nil
 }
 
 func (m *Manager) isAlive(pid int) bool {
-	err := syscall.Kill(pid, syscall.Signal(0))
-	if err != nil {
+	if !isProcessAlive(pid) {
 		return false
 	}
 	if st, stateErr := m.processState(pid); stateErr == nil {
@@ -146,6 +144,29 @@ func (m *Manager) IsRunning(pid int) bool {
 	return m.isAlive(pid)
 }
 
+// GetProcessStartTime returns the OS-reported start time for a live process.
+func (m *Manager) GetProcessStartTime(pid int) (time.Time, error) {
+	if pid <= 0 {
+		return time.Time{}, fmt.Errorf("invalid pid: %d", pid)
+	}
+	if !m.IsRunning(pid) {
+		return time.Time{}, fmt.Errorf("process %d is not running", pid)
+	}
+	return getProcessStartTime(pid)
+}
+
+// GetProcessCommand returns the OS-reported command line for a live process.
+// This is the resolved form after OS interpretation (e.g. "bunx vite" -> "node .../vite").
+func (m *Manager) GetProcessCommand(pid int) (string, error) {
+	if pid <= 0 {
+		return "", fmt.Errorf("invalid pid: %d", pid)
+	}
+	if !m.IsRunning(pid) {
+		return "", fmt.Errorf("process %d is not running", pid)
+	}
+	return getProcessCommand(pid)
+}
+
 // createLogFile creates a new log file for a service
 func (m *Manager) createLogFile(serviceName string) (*os.File, error) {
 	// Create service log directory
@@ -159,11 +180,6 @@ func (m *Manager) createLogFile(serviceName string) (*os.File, error) {
 	logPath := filepath.Join(serviceLogDir, timestamp+".log")
 
 	return os.Create(logPath)
-}
-
-// GetLogs retrieves recent logs for a service
-func (m *Manager) GetLogs(serviceName string, lines int) ([]string, error) {
-	return m.Tail(serviceName, lines)
 }
 
 // LatestLogPath returns the most recent log file path for a service.
@@ -197,29 +213,7 @@ func (m *Manager) Tail(serviceName string, lines int) ([]string, error) {
 		return nil, err
 	}
 
-	file, err := os.Open(logPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open log file: %w", err)
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	buf := make([]byte, 0, 1024*1024)
-	scanner.Buffer(buf, 1024*1024)
-
-	linesBuf := make([]string, 0, lines)
-	for scanner.Scan() {
-		if len(linesBuf) < lines {
-			linesBuf = append(linesBuf, scanner.Text())
-		} else {
-			copy(linesBuf, linesBuf[1:])
-			linesBuf[len(linesBuf)-1] = scanner.Text()
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("failed to read log file: %w", err)
-	}
-	return linesBuf, nil
+	return m.tailFile(logPath, lines)
 }
 
 // TailProcess tries to retrieve logs for a non-managed process.
@@ -255,31 +249,58 @@ func (m *Manager) TailProcess(pid int, lines int) ([]string, error) {
 }
 
 func (m *Manager) pickProcessLogFile(pid int) (string, bool) {
-	cmd := exec.Command("lsof", "-nP", "-p", strconv.Itoa(pid), "-Fn")
-	output, err := cmd.Output()
-	if err != nil {
-		return "", false
+	var candidates []string
+
+	// On Linux, read /proc/<pid>/fd/ directly — works without lsof/root
+	if runtime.GOOS == "linux" {
+		fdDir := filepath.Join("/proc", strconv.Itoa(pid), "fd")
+		entries, err := os.ReadDir(fdDir)
+		if err == nil {
+			for _, ent := range entries {
+				link, err := os.Readlink(filepath.Join(fdDir, ent.Name()))
+				if err != nil {
+					continue
+				}
+				lower := strings.ToLower(link)
+				if !strings.Contains(lower, ".log") && !strings.Contains(lower, "/log") {
+					continue
+				}
+				fi, statErr := os.Stat(link)
+				if statErr != nil || fi.IsDir() {
+					continue
+				}
+				candidates = append(candidates, link)
+			}
+		}
 	}
 
-	var candidates []string
-	for _, line := range strings.Split(string(output), "\n") {
-		if !strings.HasPrefix(line, "n") {
-			continue
+	// If no candidates from /proc (or not Linux), try lsof
+	if len(candidates) == 0 {
+		cmd := exec.Command("lsof", "-nP", "-p", strconv.Itoa(pid), "-Fn")
+		output, err := cmd.Output()
+		if err != nil {
+			return "", false
 		}
-		path := strings.TrimSpace(strings.TrimPrefix(line, "n"))
-		if path == "" {
-			continue
+		for _, line := range strings.Split(string(output), "\n") {
+			if !strings.HasPrefix(line, "n") {
+				continue
+			}
+			path := strings.TrimSpace(strings.TrimPrefix(line, "n"))
+			if path == "" {
+				continue
+			}
+			lower := strings.ToLower(path)
+			if !strings.Contains(lower, ".log") && !strings.Contains(lower, "/log") {
+				continue
+			}
+			fi, statErr := os.Stat(path)
+			if statErr != nil || fi.IsDir() {
+				continue
+			}
+			candidates = append(candidates, path)
 		}
-		lower := strings.ToLower(path)
-		if !strings.Contains(lower, ".log") && !strings.Contains(lower, "/log") {
-			continue
-		}
-		fi, statErr := os.Stat(path)
-		if statErr != nil || fi.IsDir() {
-			continue
-		}
-		candidates = append(candidates, path)
 	}
+
 	if len(candidates) == 0 {
 		return "", false
 	}

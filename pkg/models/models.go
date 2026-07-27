@@ -44,16 +44,19 @@ type AgentTag struct {
 
 // ManagedService represents an explicitly registered server
 type ManagedService struct {
-	Name      string     `json:"name"`
-	CWD       string     `json:"cwd"`
-	Command   string     `json:"command"`
-	Ports     []int      `json:"ports"`
-	LastPID   *int       `json:"last_pid,omitempty"`
-	LastStart *time.Time `json:"last_start,omitempty"`
-	LastStop  *time.Time `json:"last_stop,omitempty"`
-	Tags      []string   `json:"tags,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	Name                 string           `json:"name"`
+	CWD                  string           `json:"cwd"`
+	Command              string           `json:"command"`       // declared command (what we spawn)
+	ResolvedCommand      string           `json:"resolved_command,omitempty"` // actual command after OS resolution (what ps shows)
+	Ports                []int            `json:"ports"`
+	LastPID              *int             `json:"last_pid,omitempty"`
+	LastStart            *time.Time       `json:"last_start,omitempty"`
+	LastStop             *time.Time       `json:"last_stop,omitempty"`
+	LastProcessStartTime *time.Time       `json:"last_process_start_time,omitempty"`
+	Tags                 []string         `json:"tags,omitempty"`
+	Readiness            *ReadinessConfig `json:"readiness,omitempty"`
+	CreatedAt            time.Time        `json:"created_at"`
+	UpdatedAt            time.Time        `json:"updated_at"`
 }
 
 // Registry holds all managed services

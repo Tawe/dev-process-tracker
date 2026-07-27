@@ -1,0 +1,28 @@
+```
+Dev Process Tracker - Health Monitor 0.4.1
+Name (10)       Port    PID      Project         Command                                                                                           Health
+─────────────  ──────  ───────  ──────────────  ────────────────────────────────────────────────────────────────────────────────────────────────  ───────
+web-proxy       8443    42180    infra           /opt/homebrew/bin/caddy run --config /etc/caddy/Caddyfile                                         ✅
+api-server      8080    41092    api-gateway     /home/dev/.local/bin/go run ./cmd/server --port 8080                                              ✅
+redis-cache     6379    39841    infra           /opt/homebrew/bin/redis-server /usr/local/etc/redis.conf                                          ✅
+worker-1        5678    38200    task-queue      python3 -m celery -A tasks worker --loglevel=info --concurrency=4                                 ✅
+docs-site       4000    37155    docs            node /home/dev/projects/docs-app/node_modules/.bin/vite                                           ✅
+pg-primary      5432    36012    infra           /opt/homebrew/opt/postgresql@16/bin/postgres -D /usr/local/var/postgres                           ✅
+grafana         3100    34587    monitoring      /opt/homebrew/bin/grafana-server --homepath /opt/homebrew/var/lib/grafana                         ✅
+otel-collector  4318    33201    observability   /home/dev/.local/bin/otelcol-contrib --config=/etc/otel/config.yaml                               ✅
+auth-svc        9091    32104    api-gateway     /home/dev/.local/bin/go run ./cmd/auth --grpc-port 9091                                           ✅
+Managed Services (9) ──────────────────────────────────────────────────────── Selected service details ─────────────────────────────────────────────
+✘ api-backup [crashed]                                                        [↻ restart]  [■ stop]  [✎ edit]
+✘ api-server [crashed]                                                        ✘ api-server [crashed]
+■ db-migrate [stopped]                                                        Source: managed
+▶ docs-site [running]                                                         Dir: /home/dev/projects/api-gateway
+✘ worker-pool [crashed]                                                       Port: 8080
+▶ grafana [running]                                                           Cmd: go run ./cmd/server --port 8080
+▶ pg-primary [running]                                                        Headline: panic: connection refused: dial tcp 127.0.0.1:5432
+▶ redis-cache [running]                                                       Log: /home/dev/.config/devpt/logs/api-server/2026-04-28T14-22-07.lo
+■ sentinel [stopped]                                                          github.com/project/api/internal/db.Open()
+■ webhook-relay [stopped]                                                     /home/dev/projects/api-gateway/internal/db/db.go:47
+                                                                              main.connectDB()
+                                                                              /home/dev/projects/api-gateway/cmd/server/main.go:112
+tab switch list • enter logs/start • / filter • ? toggle help • g group mode
+```

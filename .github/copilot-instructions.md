@@ -1,6 +1,6 @@
 # DevPortTrack Copilot Instructions
 
-A macOS CLI tool for discovering, tracking, and managing local development servers. ~3,900 lines of Go across 9 packages.
+A macOS CLI tool for discovering, tracking, and managing local development servers. ~8,300 lines of Go across 10 packages.
 
 ## Quick Reference
 
@@ -27,12 +27,14 @@ go test -v ./pkg/cli -run TestWarnLegacyManagedCommands
 
 ### Key Directories
 - **cmd/devpt/main.go** - CLI entry point (~170 lines). Routes commands and prints results to stdout/stderr.
-- **pkg/cli/** - Command handlers (commands.go), TUI app controller (app.go), and Bubble Tea UI (tui.go). ~50KB of code.
+- **pkg/cli/** - Command handlers (commands.go), TUI app controller (app.go), and Bubble Tea UI (pkg/cli/tui/). ~50KB of code.
 - **pkg/scanner/** - Process discovery via `lsof`, project root detection, and AI agent detection.
 - **pkg/registry/** - Service registry (JSON at ~/.config/devpt/registry.json). Thread-safe CRUD operations.
 - **pkg/process/** - Process lifecycle management: spawning, log capture, graceful shutdown.
+- **pkg/lifecycle/** - Service lifecycle orchestration: identity verification, reconciliation, readiness checks, per-service locking, start/stop/restart workflows. See PROCESS_MANAGEMENT.md for the behavioral contract.
 - **pkg/models/** - Core data structures (ProcessRecord, ManagedService, AgentTag) and config paths.
 - **pkg/health/** - Health check utilities (basic placeholder for future expansion).
+- **pkg/resource/** - Runtime resource metrics (memory RSS) via batch `ps` calls.
 
 ## Architecture Overview
 
@@ -41,14 +43,24 @@ go test -v ./pkg/cli -run TestWarnLegacyManagedCommands
 2. **Resolver** walks filesystem to find project roots (.git, go.mod, package.json, etc.)
 3. **Detector** analyzes parent process/env to identify AI-agent-started servers
 4. **Registry** (`pkg/registry`) manages user-registered managed services (JSON at ~/.config/devpt/registry.json)
-5. **Process Manager** (`pkg/process`) handles spawning, stopping, and log capture
-6. **CLI/TUI** presents the unified list and command interface
+5. **Lifecycle Manager** (`pkg/lifecycle`) orchestrates start/stop/restart with identity verification, readiness, and per-service locking
+6. **Process Manager** (`pkg/process`) handles spawning, stopping, and log capture
+7. **Resource Collector** (`pkg/resource`) fetches runtime metrics (memory) via batch `ps` calls
+8. **Health Checker** (`pkg/health`) probes ports for responsiveness
+9. **CLI/TUI** presents the unified list and command interface
 
 ### Key Models
 - **ProcessRecord**: Discovered listening process (PID, port, command, project root, agent detection)
 - **ManagedService**: User-registered service (name, cwd, command, ports, timestamps)
 - **AgentTag**: Detection result (source, agent name, confidence level)
 - **Registry**: Container for all managed services (versioned JSON format)
+
+### Runtime Observations
+Memory and health are runtime observations, separate from discovery data:
+- Fetched asynchronously in the TUI update loop (every 2s when idle)
+- Stored in TUI model maps keyed by PID (memory) or port (health)
+- Not persisted — they reflect current state only
+- Batch collection via `ps -p <pids> -o pid=,rss=` — returns KB for each PID
 
 ### Command Routing
 Entry point (cmd/devpt/main.go) routes commands:
@@ -57,10 +69,17 @@ Entry point (cmd/devpt/main.go) routes commands:
 
 ## Critical Implementation Details
 
+### Service Identity and Lifecycle
+The lifecycle layer (`pkg/lifecycle`) manages service identity using an ordered evidence chain:
+1. PID + start time → 1b. Stored LastPID + path → 2. Declared port → 3. CWD + resolved command → 4. Exact CWD → 5. Project root
+
+After spawn, the OS-resolved command is captured and stored for future identity matching.
+See PROCESS_MANAGEMENT.md §1.3 and §3.4 for the full contract.
+
 ### ProcessRecord vs ManagedService Merging
 When listing services:
-1. Merge discovered processes with managed registry entries
-2. Managed service appears as "running" if its PID is in discovered processes
+1. Merge discovered processes with managed registry entries via the reconciler
+2. Managed service appears as "running" if identity verification confirms ownership
 3. Source field shows: "manual" (discovered but unmanaged), "managed" (registered), or "agent:xxx" (detected)
 
 ### Agent Detection Confidence
@@ -77,7 +96,8 @@ Returns confidence level: low, medium, or high. Code uses these intelligently fo
 - Processes spawn in separate process groups (setpgid)
 - stdout/stderr redirected to ~/.config/devpt/logs/{serviceName}/{timestamp}.log
 - Graceful shutdown: SIGTERM with timeout, then SIGKILL
-- PID and start time tracked in registry after spawn
+- PID, start time, and resolved command tracked in registry after spawn
+- TUI stop/restart routes through the lifecycle layer (not raw PID calls)
 
 ### Directory Caching
 Project resolver caches directory → project root mappings.
@@ -97,17 +117,26 @@ Cache can be invalidated selectively. Important for performance (lsof calls are 
 ## Testing
 
 ### Test Locations
-- **pkg/cli/**: app_warning_test.go (TestWarnLegacyManagedCommands), command_validation_test.go (TestValidateManagedCommand, TestFirstBlockedShellPattern) - 3 tests total
-- **pkg/process/**: manager_parse_test.go (TestParseCommandArgs, TestParseCommandArgs_UnterminatedQuote) - 2 tests total
+- **pkg/cli/**: command validation, pattern matching, batch ops, status commands, display formatting — 10 test files
+- **pkg/cli/tui/**: UI rendering, key input, state transitions, viewports, memory display, namespaces, OSC8, group color — 12 test files
+- **pkg/lifecycle/**: identity, reconciliation, start/stop/restart flows, readiness, locking, outcomes — 11 test files
+- **pkg/process/**: command parsing, start time — 2 test files
+- **pkg/resource/**: memory formatting, color thresholds, collection — 1 test file
+- **pkg/registry/**: CRUD operations — 1 test file
+- **pkg/scanner/**: process discovery — 1 test file
+- **pkg/models/**: lifecycle models — 1 test file
 
 ### Test Patterns
 - Table-driven tests for command parsing and validation
 - No external dependencies; tests use pure Go (no mocking framework)
-- Run full suite: `go test ./...` (2 seconds)
+- Run full suite: `go test ./...` (~20 seconds)
 - Run single package: `go test -v ./pkg/cli`
 - Run specific test: `go test -v ./pkg/cli -run TestWarnLegacyManagedCommands`
 
 ## Conventions
+
+### Spec Updates
+- Removed specs: delete cleanly, re-render. No ~~strikethrough~~, no **REMOVED** annotations, no tombstone rows.
 
 ### Naming
 - Packages use lowercase, no underscores (Go convention)
@@ -133,12 +162,31 @@ Cache can be invalidated selectively. Important for performance (lsof calls are 
 - Create dirs if missing with MkdirAll (mode 0755)
 - Log files timestamped as: ~/.config/devpt/logs/{serviceName}/{ISO8601}.log
 
-### TUI-Specific (pkg/cli/tui.go)
+### TUI-Specific (pkg/cli/tui/)
 - Model-based architecture (Bubble Tea): Cmd returns effects, Model contains state
-- Top-level ListModel has tabs for "Running" and "Managed" lists
+- Split-view layout: running services table (top) + managed services list (bottom) + universal details pane (right)
+- Details pane shows info for whichever service is currently selected (running or managed)
 - Never mutate Model state directly—use Cmd/Update pattern
 - Exit conditions: user presses 'q', or explicit quit() command
 - Key handlers prioritized: modal state (logs/input) takes precedence over list navigation
+- Async observation: memory collected every 2s via batch `ps`, health checked asynchronously
+
+## Before Submitting Changes
+
+Always run these checks before considering work complete:
+
+```bash
+# 1. Build succeeds
+go build ./...
+
+# 2. All tests pass
+go test ./...
+
+# 3. CLI runs without error
+go build -o devpt ./cmd/devpt && ./devpt ls
+```
+
+If adding user-facing features, also update README.md and QUICKSTART.md.
 
 ## Common Tasks
 
@@ -173,8 +221,11 @@ Cache can be invalidated selectively. Important for performance (lsof calls are 
 ## Documentation Files
 - **README.md** - Full user documentation and CLI reference
 - **QUICKSTART.md** - Getting started guide for new users
+- **PROCESS_MANAGEMENT.md** - Behavioral contract for service lifecycle (identity, reconciliation, outcomes)
+- **DEBUG.md** - Debug protocol with verified runtime workflows
 - **IMPLEMENTATION_SUMMARY.md** - Architecture and feature overview (reference only)
 - **techspec.md** - Original technical specification
+- **.agents/skills/devpt-release/SKILL.md** - Release workflow (changelog + version bump)
 
 Update README and QUICKSTART when adding user-facing features or commands.
 
